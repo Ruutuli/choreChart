@@ -1,0 +1,111 @@
+<!-- ============================================================================= -->
+<!-- index.html — Family Chore Tracker (Single Stylesheet Version)                -->
+<!-- ============================================================================= -->
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Family Chore Tracker</title>
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://kit.fontawesome.com/262000d25d.js" crossorigin="anonymous"></script>
+  </head>
+  <body>
+    <!-- Sidebar Panel -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar__header">
+        <h2><i class="fas fa-sliders-h"></i> Dashboard</h2>
+        <button class="sidebar__close" onclick="toggleSidebar()">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+      <button class="sidebar__action" onclick="resetChores()" title="Reset chore progress for everyone">
+        <i class="fas fa-rotate-left"></i> Reset
+      </button>
+      
+      <button class="sidebar__action" onclick="viewHistory()" title="View past completed chores">
+        <i class="fas fa-clock-rotate-left"></i> History
+      </button>
+      
+
+      <button class="sidebar__action" onclick="manualOverride()" title="Manually adjust chores or points">
+        <i class="fas fa-wrench"></i> Manual Override
+      </button>    
+      
+      <button class="sidebar__action" onclick="viewCalendar()" title="See when chores reset or rotate">
+        <i class="fas fa-calendar-alt"></i> Calendar View
+      </button>
+      
+    </aside>
+
+    <!-- Header -->
+    <header class="header">
+      <button class="header__menu" onclick="toggleSidebar()">
+        <i class="fas fa-bars"></i>
+      </button>
+      <h1 class="header__title">
+        <i class="fas fa-house-user"></i> Family Chore Tracker
+      </h1>
+    </header>
+
+    <!-- Main Dashboard Area -->
+    <main>
+      <section id="dashboard">
+        <div id="dashboardContent" class="dashboard">
+          <!-- Chore cards will be rendered here by JS -->
+        </div>
+      </section>
+      
+<!-- ============================================================================ -->
+<!-- 02. History Section — Completed Chores Per Person                            -->
+<!-- ============================================================================ -->
+<section id="history" class="hidden">
+  <button class="back-btn" onclick="showSection('dashboard')">
+    ← Back to Dashboard
+  </button>
+
+  <h2 class="section-title"><i class="fas fa-clock-rotate-left"></i> Chore History</h2>
+  <div id="historyContent" class="history__container"></div>
+</section>
+
+<!-- ============================================================================ -->
+<!-- 03. Calendar Section — Visualize Chore Weeks                                -->
+<!-- ============================================================================ -->
+<section id="calendar" class="calendar-section hidden">
+  <button class="back-btn" onclick="showSection('dashboard')">← Back to Dashboard</button>
+  <h2 class="section-title"><i class="fas fa-calendar-alt"></i> Calendar View</h2>
+  
+  <div class="calendar__container">
+    <div id="calendarContent"></div> <!-- JS will insert .calendar__grid -->
+  </div>
+</section>
+
+
+
+
+
+    </main>
+
+    <!-- Reset Confirmation Modal -->
+<div class="modal" id="resetModal">
+    <div class="modal__content">
+      <h3><i class="fas fa-exclamation-triangle"></i> Confirm Reset</h3>
+      <p>This will reset all chores and charge $1 for each missed task. Are you sure?</p>
+      <div class="modal__actions">
+        <button onclick="confirmReset()">Yes, Reset</button>
+        <button onclick="closeModal()">Cancel</button>
+      </div>
+    </div>
+  </div>
+  
+
+    <!-- Footer -->
+    <footer class="footer">
+
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

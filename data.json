@@ -1,0 +1,100 @@
+{
+    "people": [
+      {
+        "id": "lauren",
+        "name": "Lauren",
+        "color": "#e26d6d",
+        "dollarsOwed": 2
+      },
+      {
+        "id": "silas",
+        "name": "Silas",
+        "color": "#4caf50",
+        "dollarsOwed": 1
+      },
+      {
+        "id": "jkins",
+        "name": "Jkins",
+        "color": "#5a9bd8",
+        "dollarsOwed": 0
+      },
+      {
+        "id": "natasha",
+        "name": "Natasha",
+        "color": "#a673d1",
+        "dollarsOwed": 3
+      }
+    ],
+    "chores": {
+        "permanent": {
+          "lauren": [
+            { "task": "Sweep Front Porch", "type": "biweekly" },
+            { "task": "Sweep Back Porch", "type": "biweekly" },
+            { "task": "Vacuum Den", "type": "weekly" },
+            { "task": "Mop Den", "type": "monthly" },
+            { "task": "Dust Den", "type": "weekly" },
+            { "task": "Clean Trim Den", "type": "monthly" },
+            { "task": "Wash Rug in Den", "type": "monthly" },
+            { "task": "Wash Chair Covers in Den", "type": "monthly" },
+            { "task": "Vacuum Craftroom", "type": "monthly" }
+          ],
+          "silas": [
+            { "task": "Sweep/Vacuum Loft", "type": "weekly" },
+            { "task": "Mop Loft", "type": "biweekly" },
+            { "task": "Dust Loft", "type": "weekly" },
+            { "task": "Clean Trim Loft", "type": "monthly" },
+            { "task": "Litter Box (Loft)", "type": "weekly" },
+            { "task": "Update Calendar", "type": "monthly" },
+            { "task": "Scrub Kitchen Grout", "type": "monthly" },
+            { "task": "Change Filters", "type": "quarterly" }
+          ],
+          "jkins": [
+            { "task": "Sweep/Vacuum Dining Room", "type": "weekly" },
+            { "task": "Mop Dining Room", "type": "biweekly" },
+            { "task": "Dust Dining Room", "type": "weekly" },
+            { "task": "Clean Trim Dining Room", "type": "monthly" },
+            { "task": "Sweep/Vacuum Foyer", "type": "weekly" },
+            { "task": "Dining Room Cushions", "type": "monthly" },
+            { "task": "Mop Foyer", "type": "weekly" },
+            { "task": "Dust Foyer", "type": "weekly" },
+            { "task": "Clean Trim Foyer", "type": "monthly" }
+          ],
+          "natasha": [
+            { "task": "Sweep Living Room", "type": "weekly" },
+            { "task": "Vacuum Living Room", "type": "weekly" },
+            { "task": "Mop Living Room", "type": "biweekly" },
+            { "task": "Dust Living Room", "type": "weekly" },
+            { "task": "Clean Trim Living Room", "type": "monthly" },
+            { "task": "Sweep/Vacuum Stairs", "type": "weekly" },
+            { "task": "Mop Stairs", "type": "biweekly" },
+            { "task": "Dust Stairs", "type": "weekly" },
+            { "task": "Clean Trim Stairs", "type": "monthly" }
+
+          ]
+        },
+        "rotating": [
+          { "task": "Dishes", "type": "daily" },
+          { "task": "Trash", "type": "daily" },
+          { "task": "Kitchen Counter Wipe", "type": "daily" },
+          { "task": "Empty Roomba", "type": "daily" },
+      
+          { "task": "Clean Trim Dining Room", "type": "monthly" },
+      
+          { "task": "Sweep Laundry Room", "type": "weekly" },
+          { "task": "Mop Laundry Room", "type": "biweekly" },
+          { "task": "Clean Laundry Room", "type": "weekly" },
+      
+          { "task": "Sweep Kitchen", "type": "weekly" },
+          { "task": "Mop Kitchen", "type": "weekly" },
+          { "task": "Clean Trim Kitchen", "type": "monthly" },
+          { "task": "Clean Kitchen Sink", "type": "weekly" },
+          { "task": "Clean Out Pantry", "type": "biweekly" },
+          { "task": "Clean Out Fridge", "type": "biweekly" },
+      
+          { "task": "Garage Trash Out", "type": "weekly" }
+        ]
+      }
+      
+      
+  }
+  
