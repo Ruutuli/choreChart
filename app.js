@@ -606,6 +606,16 @@ const onDrop = (event, toId) => {
   draggedChoreInfo = null;
 };
 
+// ------------------- Register Service Worker -------------------
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("./sw.js")
+      .then(() => console.log("[PWA] Service Worker registered ✅"))
+      .catch(err => console.error("[PWA] Service Worker failed", err));
+  });
+}
+
   /* ============================================================================
      Init — Start the App
   ============================================================================ */
