@@ -2,15 +2,15 @@
 
 const CACHE_NAME = "chore-tracker-v1";
 const ASSETS_TO_CACHE = [
-  "./",
-  "./index.html",
-  "./style.css",
-  "./app.js",
-  "./data.json",
-  "./manifest.json",
-  "./icons/icon-192.png",
-  "./icons/icon-512.png"
-];
+    "./",
+    "./index.html",
+    "./style.css",
+    "./app.js",
+    "./data.json",
+    "./manifest.json"
+    // Removed icons to prevent 404s
+  ];
+  
 
 self.addEventListener("install", event => {
   event.waitUntil(

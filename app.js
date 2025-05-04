@@ -4,12 +4,9 @@
 
 // ============================================================================
 // ------------------- Section: Data Load -------------------
-// Loads initial data from data.json and merges with saved localStorage data.
+// Loads initial data from Firebase (or local fallback) and merges with data.json.
 // ============================================================================
 
-let people = [];
-
-const savedChoreData = localStorage.getItem("choreData");
 
 fetch("data.json")
   .then(res => {
@@ -18,14 +15,13 @@ fetch("data.json")
     }
     return res.json();
   })
-  .then(data => {
+  .then(async (data) => {
     if (!data || !Array.isArray(data.people) || typeof data.chores !== "object") {
-      console.error("[app.js]: Invalid data.json structure", data);
+      console.error("[app.js]: ❌ Invalid data.json structure", data);
       return;
     }
 
     const { people: personList, chores } = data;
-    const savedPeople = savedChoreData ? JSON.parse(savedChoreData) : [];
     const isNewWeek = shouldReassignRotatingChores();
 
     people = personList.map((person, index) => {
@@ -66,18 +62,21 @@ fetch("data.json")
 
     if (isNewWeek) {
       updateChoreCycleStartDate();
-      localStorage.setItem("choreData", JSON.stringify(people));
-      console.log("[app.js]: New week detected — rotating chores reassigned");
+      try {
+        await window.saveChoreData("myHouseholdId", { people });
+        console.log("[app.js]: ✅ Cloud chore data saved for new week.");
+      } catch (err) {
+        console.error("[app.js]: ⚠️ Firebase save failed. Saving to localStorage instead.", err);
+        localStorage.setItem("choreData", JSON.stringify(people));
+      }
     }
 
     renderDashboard();
   })
   .catch(err => {
-    console.error("[app.js]: Failed to load or process data.json", err);
+    console.error("[app.js]: ❌ Failed to load or process data.json", err);
     alert("❌ Failed to load chore data. Please check your file or reload.");
   });
-
-
 
   // ============================================================================
 // ------------------- Section: Date Utilities -------------------
@@ -414,6 +413,8 @@ const completeChore = (name, choreName) => {
   renderDashboard();
 };
 
+window.completeChore = completeChore;
+
   // ============================================================================
 // ------------------- Section: Sidebar Controls -------------------
 // Handles navigation, modal triggers, resets, and section toggling.
@@ -425,12 +426,17 @@ const toggleSidebar = () => {
   document.getElementById("sidebar").classList.toggle("open");
 };
 
+window.toggleSidebar = toggleSidebar; // <-- ADD THIS LINE
+
+
 // ------------------- Function: resetChores -------------------
 // Opens the reset confirmation modal.
 const resetChores = () => {
   toggleSidebar();
   document.getElementById("resetModal").classList.add("show");
 };
+
+window.resetChores = resetChores;
 
 // ------------------- Function: confirmReset -------------------
 // Resets weekly completion and adds $1 for each missed chore.
@@ -455,11 +461,15 @@ const confirmReset = () => {
   console.log("[app.js]: ✅ Chores reset and missed chores tallied.");
 };
 
+window.confirmReset = confirmReset;
+
 // ------------------- Function: closeModal -------------------
 // Hides the modal dialog.
 const closeModal = () => {
   document.getElementById("resetModal").classList.remove("show");
 };
+
+window.closeModal = closeModal;
 
 // ------------------- Function: showSection -------------------
 // Shows one section and hides the others (dashboard, history, calendar).
@@ -489,12 +499,16 @@ const showSection = (idToShow) => {
   if (idToShow === "calendar") renderCalendar();
 };
 
+window.showSection = showSection;
+
 // ------------------- Function: viewHistory -------------------
 // Shows the history panel and closes sidebar.
 const viewHistory = () => {
   showSection("history");
   toggleSidebar();
 };
+
+window.viewHistory = viewHistory;
 
 // ------------------- Function: viewCalendar -------------------
 // Shows the calendar view and closes sidebar.
@@ -503,12 +517,16 @@ const viewCalendar = () => {
   showSection("calendar");
 };
 
+window.viewCalendar = viewCalendar;
+
 // ------------------- Function: manualOverride -------------------
 // Placeholder for override functionality.
 const manualOverride = () => {
   toggleSidebar();
   alert("🛠️ Manual override — feature coming soon!");
 };
+
+window.manualOverride = manualOverride;
 
   /* ============================================================================
      05. Future Features (Placeholders)
@@ -616,9 +634,102 @@ if ("serviceWorker" in navigator) {
   });
 }
 
-  /* ============================================================================
-     Init — Start the App
-  ============================================================================ */
-  
-// Check every minute for reset trigger
-setInterval(autoResetChoresIfNeeded, 60000);
+// ============================================================================
+// ------------------- Init: Load Data & Start App -------------------
+// Initializes global people array and triggers chore logic
+// ============================================================================
+
+// ------------------- Global Variables -------------------
+let people = [];
+let savedPeople = [];
+
+setInterval(autoResetChoresIfNeeded, 60000); // Run chore reset checks every minute
+
+(async () => {
+  try {
+    const cloudData = await window.loadChoreData("myHouseholdId");
+    savedPeople = cloudData?.people || [];
+  } catch (err) {
+    console.error("[app.js]: ⚠️ Failed to load from Firebase. Falling back to localStorage.", err);
+    const localData = localStorage.getItem("choreData");
+    savedPeople = localData ? JSON.parse(localData) : [];
+  }
+
+  fetch("data.json")
+    .then(res => {
+      if (!res.ok) throw new Error("Invalid response from data.json");
+      return res.json();
+    })
+    .then(async (data) => {
+      const { people: personList, chores } = data;
+      const isNewWeek = shouldReassignRotatingChores();
+
+      people = personList.map((person, index) => {
+        const baseChores = (chores.permanent?.[person.id] || []).map(c => ({
+          name: c.task,
+          type: c.type,
+          origin: "permanent"
+        }));
+
+        const savedPerson = savedPeople.find(p => p.id === person.id) || {};
+        let rotatingChores = [];
+        
+// ------------------- Deterministic Rotating Chores -------------------
+if (isNewWeek) {
+  rotatingChores = chores.rotating
+    .filter((c, i) => {
+      const isBiweekly = c.type === "biweekly";
+      return (!isBiweekly || isBiweeklyWeek()) && i % personList.length === index;
+    })
+    .map(c => ({
+      name: c.task,
+      type: c.type,
+      origin: "rotating"
+    }));
+
+  // Save assigned people + chores to localStorage immediately
+  savedPerson.chores = [...baseChores, ...rotatingChores];
+  localStorage.setItem("choreData", JSON.stringify(
+    personList.map(p => {
+      const sp = p.id === person.id ? savedPerson : savedPeople.find(e => e.id === p.id) || {};
+      return {
+        ...p,
+        chores: sp.chores || [],
+        completed: sp.completed || [],
+        dollarsOwed: sp.dollarsOwed ?? p.dollarsOwed ?? 0
+      };
+    })
+  ));
+} else {
+  const savedChores = savedPerson.chores || [];
+  rotatingChores = savedChores.filter(c => c.origin === "rotating");
+}
+
+
+        return {
+          ...person,
+          chores: [...baseChores, ...rotatingChores],
+          completed: isNewWeek ? [] : (savedPerson.completed || []),
+          dollarsOwed: savedPerson.dollarsOwed ?? person.dollarsOwed ?? 0,
+          points: 0
+        };
+      });
+
+      if (isNewWeek) {
+        updateChoreCycleStartDate();
+        try {
+          await window.saveChoreData("myHouseholdId", { people });
+        } catch (err) {
+          console.error("[app.js]: ⚠️ Firebase save failed. Saving locally.", err);
+          localStorage.setItem("choreData", JSON.stringify(people));
+        }
+      }
+
+      renderDashboard();
+    })
+    .catch(err => {
+      console.error("[app.js]: ❌ Failed to load or process data.json", err);
+      alert("❌ Failed to load chore data. Please check your file or reload.");
+    });
+})();
+

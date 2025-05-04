@@ -9,7 +9,43 @@
 <link rel="manifest" href="manifest.json" />
 <meta name="theme-color" content="#34d399" />
 <link rel="apple-touch-icon" href="icons/icon-192.png" />
-<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json">
+<!-- Firebase SDKs via CDN -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+  import {
+    getFirestore,
+    doc,
+    getDoc,
+    setDoc
+  } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
+
+  // Your Firebase config
+  const firebaseConfig = {
+    apiKey: "AIzaSyCk9B5LZw6G5fig_7rwCTxnOCwC0UMmWOo",
+    authDomain: "choretracker-d05ba.firebaseapp.com",
+    projectId: "choretracker-d05ba",
+    storageBucket: "choretracker-d05ba.firebasestorage.app",
+    messagingSenderId: "262712306884",
+    appId: "1:262712306884:web:bb79dfb5fbc5ce32de6d91"
+  };
+
+  // Initialize Firebase & Firestore, expose globally
+  const app = initializeApp(firebaseConfig);
+  window.db = getFirestore(app);
+
+  // Global helpers
+  window.saveChoreData = async (householdId, data) => {
+    await setDoc(doc(window.db, "households", householdId), data);
+  };
+
+  window.loadChoreData = async (householdId) => {
+    const docRef = doc(window.db, "households", householdId);
+    const snapshot = await getDoc(docRef);
+    return snapshot.exists() ? snapshot.data() : null;
+  };
+</script>
 
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -112,6 +148,7 @@
 
     </footer>
 
-    <script src="app.js"></script>
+    <script type="module" src="app.js"></script>
+
   </body>
 </html>
