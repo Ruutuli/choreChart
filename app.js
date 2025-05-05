@@ -294,17 +294,18 @@ function confirmResetAll() {
 
   if (typeof window.saveChoreData === "function") {
     window.saveChoreData("myHouseholdId", { people }).then(() => {
-      renderDashboard();
+      showSection("admin");
       showCustomAlert("🗑️ All data reset and reassigned.");
     }).catch(err => {
       console.error("[confirmResetAll]: ❌ Firebase sync failed", err);
-      renderDashboard();
+      showSection("admin");
       showCustomAlert("⚠️ Reset saved locally but not synced.");
     });
   } else {
-    renderDashboard();
+    showSection("admin");
     showCustomAlert("🗑️ All data reset and reassigned.");
   }
+  
 }
 
 // ------------------- Manual Reset Chores -------------------
@@ -375,17 +376,17 @@ function manualResetChores() {
 
   if (typeof window.saveChoreData === "function") {
     window.saveChoreData("myHouseholdId", { people }).then(() => {
-      renderDashboard();
+      showSection("admin");
       showCustomAlert("🔁 Weekly reset complete. Missed chore amounts updated.");
     }).catch(err => {
       console.error("[manualResetChores]: ❌ Firebase sync failed", err);
-      renderDashboard();
+      showSection("admin");
       showCustomAlert("⚠️ Weekly reset saved locally but not synced.");
     });
   } else {
-    renderDashboard();
-    showCustomAlert("🔁 Weekly reset complete. Missed chore amounts updated.");
+    showSection("admin");
   }
+  
 }
 
 // applyDollarAdjustment
@@ -840,17 +841,29 @@ const completeChore = (name, choreName) => {
   // Save to Firebase only, then update UI
   if (typeof window.saveChoreData === "function") {
     window.saveChoreData("myHouseholdId", { people }).then(() => {
-      renderDashboard();
-      showCustomAlert("✅ Chore updated");
+      if (location.hash === "#admin") {
+        showSection("admin");
+      } else {
+        renderDashboard();
+      }
+      showCustomAlert("🔁 Weekly reset complete. Missed chore amounts updated.");
     }).catch(err => {
-      console.error("[completeChore]: ❌ Firebase sync failed", err);
-      renderDashboard();
-      showCustomAlert("⚠️ Saved locally only (sync failed)");
+      console.error("[manualResetChores]: ❌ Firebase sync failed", err);
+      if (location.hash === "#admin") {
+        showSection("admin");
+      } else {
+        renderDashboard();
+      }
+      showCustomAlert("⚠️ Weekly reset saved locally but not synced.");
     });
   } else {
-    console.warn("[completeChore]: ⚠️ Firebase save function not found.");
-    renderDashboard();
+    if (location.hash === "#admin") {
+      showSection("admin");
+    } else {
+      renderDashboard();
+    }
   }
+  
 };
 
 // togglePaid
