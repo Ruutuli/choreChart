@@ -86,33 +86,57 @@ function getDateRange(frequency) {
 }
 
 // ------------------- Function: shouldSendMorningText -------------------
-// Checks if the 8AM SMS was already sent today
-function shouldSendMorningText() {
+// Checks if the 8AM SMS was already sent today using Firestore
+async function shouldSendMorningText() {
   const now = new Date();
   const hours = now.getHours();
-  const lastSent = localStorage.getItem("lastSMSDate");
   const todayStr = now.toISOString().split("T")[0];
 
-  return hours === 8 && lastSent !== todayStr;
+  try {
+    const docRef = window.doc(window.db, "meta", "lastSMS");
+    const docSnap = await window.getDoc(docRef);
+    const lastSent = docSnap.exists() ? docSnap.data().date : null;
+
+    return hours >= 8 && lastSent !== todayStr;
+  } catch (err) {
+    console.error("❌ Failed to check lastSMS in Firestore:", err);
+    return false;
+  }
 }
 
 // ------------------- Function: triggerDailySMS -------------------
-// Triggers SMS to all people at 8AM daily
-function triggerDailySMS() {
-  if (!shouldSendMorningText()) return;
+// Triggers SMS to all people at 8AM daily using Firestore
+async function triggerDailySMS() {
+  const shouldSend = await shouldSendMorningText();
+  if (!shouldSend) {
+    console.log("📪 Morning SMS already sent today or too early.");
+    return;
+  }
 
-  console.log("📤 Sending 8AM SMS to all people...");
+  const timestamp = new Date().toLocaleString();
+  console.log(`📤 Sending 8AM SMS to all people at ${timestamp}...`);
 
   people.forEach(p => {
+    console.log(`📨 Sending SMS to ${p.name} (${p.phone || p.email || p.id || "No contact info"})`);
     sendChoreEmail(p);
   });
 
   const todayStr = new Date().toISOString().split("T")[0];
-  localStorage.setItem("lastSMSDate", todayStr);
+  try {
+    const docRef = window.doc(window.db, "meta", "lastSMS");
+    await window.setDoc(docRef, { date: todayStr });
+    console.log(`✅ SMS sent logged in Firestore as ${todayStr}`);
+  } catch (err) {
+    console.error("❌ Failed to save lastSMS in Firestore:", err);
+  }
 }
+
 
 // 🔁 Check every 10 minutes
 setInterval(triggerDailySMS, 10 * 60 * 1000);
+
+// ✅ Also trigger on initial page load if past 8AM
+window.addEventListener("load", triggerDailySMS);
 
 
 // ============================================================================
@@ -1479,12 +1503,13 @@ function confirmResetAll() {
 // Deletes all activity logs for the household in Firestore
 async function clearActivityLogs(householdId = "default") {
   try {
-    const logsCollection = firebase.firestore().collection("households").doc(householdId).collection("logs");
-    const snapshot = await logsCollection.get();    
+    const logsCollectionRef = window.collection(window.db, "households", householdId, "logs");
+    const snapshot = await window.getDocs(logsCollectionRef);
 
     const batch = window.writeBatch(window.db);
-    snapshot.forEach(doc => {
-      batch.delete(doc.ref);
+    snapshot.forEach(docSnap => {
+      const docRef = window.doc(window.db, "households", householdId, "logs", docSnap.id);
+      batch.delete(docRef);
     });
 
     await batch.commit();
@@ -1493,7 +1518,6 @@ async function clearActivityLogs(householdId = "default") {
     console.error("❌ Failed to clear activity logs:", err);
   }
 }
-
 // ------------------- Function: reassignRotatingChores -------------------
 // Wrapper: Weekly auto reset with snapshot + optional dollar adjustment
 function reassignRotatingChores() {
@@ -1522,7 +1546,7 @@ function reassignRotatingChores() {
   missed.forEach(entry => {
     console.log(`⚠️ ${entry.person} missed ${entry.amount} chores`);
   });
-  
+
   const now = new Date();
   logActivity({
     type: "weeklySnapshot",
@@ -1534,7 +1558,7 @@ function reassignRotatingChores() {
   if (Array.isArray(choreData.rotating)) {
     const peopleIds = people.map(p => p.id);
     const totalPeople = peopleIds.length;
-  
+
     const grouped = {
       daily: [],
       weekly: [],
@@ -1542,100 +1566,119 @@ function reassignRotatingChores() {
       monthly: [],
       quarterly: [] // Ignored here unless you add support later
     };
-  
+
     // 🧮 Group chores by type
     for (const chore of choreData.rotating) {
       if (grouped[chore.type]) grouped[chore.type].push(chore);
     }
-  
+
     // 🔄 Shuffle each group
     for (const type in grouped) {
       grouped[type] = grouped[type].sort(() => Math.random() - 0.5);
     }
-  
-    const newRotating = [];
+
     const assigned = Object.fromEntries(peopleIds.map(id => [id, []]));
-  
+
+    // ✅ Track all assigned names to prevent duplicates across everyone
+    const alreadyAssignedNames = new Set();
+
     // ✅ Helper to assign chores
     function assignChores(type, limitPerPerson, required = true) {
       let pool = [...grouped[type]];
       for (const personId of peopleIds) {
         const current = assigned[personId].filter(c => c.type === type).length;
         const needed = required ? limitPerPerson : Math.min(limitPerPerson, pool.length > 0 ? 1 : 0);
-        for (let i = 0; i < needed && pool.length > 0; i++) {
-          const chore = pool.shift();
-          if (chore) {
-            assigned[personId].push({ ...chore, people: [personId] });
-          }
+        let count = 0;
+
+        while (count < needed && pool.length > 0) {
+          const chore = pool.find(c => !alreadyAssignedNames.has(c.task || c.name));
+          if (!chore) break;
+
+          pool = pool.filter(c => (c.task || c.name) !== (chore.task || chore.name));
+          alreadyAssignedNames.add(chore.task || chore.name);
+          assigned[personId].push({ ...chore, people: [personId] });
+          count++;
         }
       }
     }
-  
+
     // ✅ Step 1: 1 Daily each
     assignChores("daily", 1, true);
-  
+
     // ✅ Step 2: 1 Biweekly each
     assignChores("biweekly", 1, true);
-  
+
     // ✅ Step 3: 1 Weekly min for each
     assignChores("weekly", 1, true);
-  
- // ✅ Step 4: Try to assign 1 Monthly only if still under 4
- for (const personId of peopleIds) {
-  if (assigned[personId].length < 4 && grouped.monthly.length > 0) {
-    const chore = grouped.monthly.shift();
-    if (chore) assigned[personId].push({ ...chore, people: [personId] });
-  }
-}
 
-// ✅ Step 5: Add 1 extra weekly max if still under 4
-for (const personId of peopleIds) {
-  if (assigned[personId].length < 4 && grouped.weekly.length > 0) {
-    const chore = grouped.weekly.shift();
-    if (chore) assigned[personId].push({ ...chore, people: [personId] });
-  }
-}
-  
-    // ✅ Final Filler: If still under 4, randomly assign any leftovers
+    // ✅ Step 4: Try to assign 1 Monthly only if still under 4
+    for (const personId of peopleIds) {
+      if (assigned[personId].length < 4 && grouped.monthly.length > 0) {
+        const chore = grouped.monthly.find(c => !alreadyAssignedNames.has(c.task || c.name));
+        if (chore) {
+          grouped.monthly = grouped.monthly.filter(c => (c.task || c.name) !== (chore.task || chore.name));
+          alreadyAssignedNames.add(chore.task || chore.name);
+          assigned[personId].push({ ...chore, people: [personId] });
+        }
+      }
+    }
+
+    // ✅ Step 5: Add 1 extra weekly max if still under 4
+    for (const personId of peopleIds) {
+      if (assigned[personId].length < 4 && grouped.weekly.length > 0) {
+        const chore = grouped.weekly.find(c => !alreadyAssignedNames.has(c.task || c.name));
+        if (chore) {
+          grouped.weekly = grouped.weekly.filter(c => (c.task || c.name) !== (chore.task || chore.name));
+          alreadyAssignedNames.add(chore.task || chore.name);
+          assigned[personId].push({ ...chore, people: [personId] });
+        }
+      }
+    }
+
+    // ✅ Final Filler: If still under 4, randomly assign any leftovers (uniquely)
     let fallbackPool = [
       ...grouped.daily,
       ...grouped.weekly,
       ...grouped.biweekly,
       ...grouped.monthly
     ].sort(() => Math.random() - 0.5);
-  
+
     for (const personId of peopleIds) {
       while (assigned[personId].length < 4 && fallbackPool.length > 0) {
-        const chore = fallbackPool.shift();
+        const chore = fallbackPool.find(c => !alreadyAssignedNames.has(c.task || c.name));
+        if (!chore) break;
+
+        fallbackPool = fallbackPool.filter(c => (c.task || c.name) !== (chore.task || chore.name));
+        alreadyAssignedNames.add(chore.task || chore.name);
         assigned[personId].push({ ...chore, people: [personId] });
       }
     }
-  
+
     // ✅ Apply to choreData.rotating
     choreData.rotating = peopleIds.flatMap(id => assigned[id]);
-  
+
     // 🔍 Confirm everyone has 4
     const counts = Object.fromEntries(peopleIds.map(id => [id, assigned[id].length]));
     console.log("🎯 Final chore counts (should be 4 each):");
     console.table(counts);
   }
 
-console.log("🎲 Reassigning rotating chores...");
-assignAllChores();
-console.log("✅ assignAllChores() complete");
+  console.log("🎲 Reassigning rotating chores...");
+  assignAllChores();
+  console.log("✅ assignAllChores() complete");
 
-people.forEach(p => {
-  p.completed = [];
-  console.log(`🧹 Cleared completed chores for ${p.name}`);
-});
-
+  people.forEach(p => {
+    p.completed = [];
+    console.log(`🧹 Cleared completed chores for ${p.name}`);
+  });
 
   savePeople();
   debouncedFirebaseSave();
   renderDashboard();
-  updateLastUpdatedText(); // ✅ ADD HERE
+  updateLastUpdatedText();
   showCustomAlert("🔁 Rotating chores reassigned. Missed chore data recorded.");
 }
+
 
 // ------------------- Function: assignRotatingChores -------------------
 // Deprecated wrapper for compatibility
