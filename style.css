@@ -1039,3 +1039,16 @@ button:disabled {
   }
 }
 
+.install-banner {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: #fef08a;
+  color: #92400e;
+  font-weight: bold;
+  text-align: center;
+  padding: 1rem;
+  z-index: 10000;
+  border-top: 2px solid #facc15;
+}

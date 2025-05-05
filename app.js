@@ -1,6 +1,22 @@
 /* ============================================================================
    app.js — Logic for Chore Tracker: Rendering, Points, Admin, Dashboard
 ============================================================================ */
+function isSafariOniOS() {
+  const ua = window.navigator.userAgent;
+  return /iPad|iPhone|iPod/.test(ua) && ua.includes("Safari") && !ua.includes("Chrome");
+}
+
+function dismissBanner() {
+  localStorage.setItem("installBannerDismissed", "true");
+  document.getElementById("installBanner")?.classList.add("hidden");
+}
+
+window.addEventListener("load", () => {
+  const shouldShow = isSafariOniOS() && !window.navigator.standalone && !localStorage.getItem("installBannerDismissed");
+  if (shouldShow) {
+    document.getElementById("installBanner")?.classList.remove("hidden");
+  }
+});
 
 /* ============================================================================
    00. Data Persistence & Utilities
@@ -93,6 +109,10 @@ function debouncedFirebaseSave(delay = 1000) {
 /* ============================================================================
    01. Time & Chore Cycle Logic
 ============================================================================ */
+
+// Add this line near getStartOfWeek()
+const storedStart = localStorage.getItem("choreStart");
+
 // getStartOfWeek
 // Returns the YYYY-MM-DD string for the most recent Sunday.
 const getStartOfWeek = () => {
@@ -141,6 +161,7 @@ function reassignRotatingChores() {
 // Sets localStorage to the current week's start date (Sunday).
 const updateChoreCycleStartDate = () => {
   const currentStart = getStartOfWeek();
+  localStorage.setItem("choreStart", currentStart);
 };
 
 // autoResetChoresIfNeeded
@@ -253,6 +274,17 @@ function confirmResetAll() {
     rotatingAssignments[personIndex].push(rotatingChores[i]);
   }
 
+  // 🔁 Snapshot current state for calendar view
+  logActivity({
+    type: "weeklySnapshot",
+    time: new Date().toISOString(),
+    snapshot: people.map(p => ({
+      name: p.name,
+      completed: [...(p.completed || [])],
+      chores: (p.chores || []).map(c => c.name)
+    }))
+  });
+
   people.forEach((p, index) => {
     p.dollarsOwed = 0;
     p.paid = false;
@@ -265,7 +297,6 @@ function confirmResetAll() {
       key.toLowerCase() === p.name.toLowerCase()
     );
     if (match) permanent = match[1];
-    
 
     for (const chore of permanent) {
       const taskName = chore.task ?? chore.name ?? "Unnamed Task";
@@ -305,7 +336,6 @@ function confirmResetAll() {
     showSection("admin");
     showCustomAlert("🗑️ All data reset and reassigned.");
   }
-  
 }
 
 // ------------------- Manual Reset Chores -------------------
@@ -321,20 +351,30 @@ function manualResetChores() {
     rotatingAssignments[personIndex].push(rotatingChores[i]);
   }
 
+  // 🔁 Snapshot current state for calendar view
+  logActivity({
+    type: "weeklySnapshot",
+    time: new Date().toISOString(),
+    snapshot: people.map(p => ({
+      name: p.name,
+      completed: [...(p.completed || [])],
+      chores: (p.chores || []).map(c => c.name)
+    }))
+  });
+
   people.forEach((p, index) => {
     const missedChores = Array.isArray(p.completed)
       ? p.chores?.filter(c => !p.completed.includes(c.name)).length || 0
       : p.chores?.length || 0;
 
-      if (missedChores > 0) {
-        logActivity({
-          type: "missedChores",
-          person: p.name,
-          amount: missedChores,
-          time: new Date().toISOString()
-        });
-      }
-      
+    if (missedChores > 0) {
+      logActivity({
+        type: "missedChores",
+        person: p.name,
+        amount: missedChores,
+        time: new Date().toISOString()
+      });
+    }
 
     p.dollarsOwed = (p.dollarsOwed || 0) + missedChores;
     p.paid = false;
@@ -347,7 +387,6 @@ function manualResetChores() {
       key.toLowerCase() === p.name.toLowerCase()
     );
     if (match) permanent = match[1];
-    
 
     for (const chore of permanent) {
       const taskName = (chore.task || chore.name || "Unnamed Task");
@@ -386,8 +425,8 @@ function manualResetChores() {
   } else {
     showSection("admin");
   }
-  
 }
+
 
 // applyDollarAdjustment
 // Adjusts the dollar amount owed for the selected person
@@ -510,16 +549,17 @@ const renderDashboard = () => {
     card.ondragover = onDragOver;
     card.ondrop = (event) => onDrop(event, person.id);
 
-    // ------------------- De-dupe Chores -------------------
-    const uniqueChores = [];
-    const seen = new Set();
+// ------------------- De-dupe Chores -------------------
+const uniqueChores = [];
+const seen = new Set();
 
-    for (const chore of person.chores) {
-      if (!seen.has(chore.name)) {
-        seen.add(chore.name);
-        uniqueChores.push(chore);
-      }
-    }
+for (const chore of person.chores) {
+  const key = `${chore.name}|${chore.type}`;
+  if (!seen.has(key)) {
+    seen.add(key);
+    uniqueChores.push(chore);
+  }
+}
 
     const permanentChores = uniqueChores
       .filter(c => c.origin === "permanent")
@@ -786,11 +826,18 @@ const renderCalendar = () => {
       }
 
       const isPast = date < now;
-      const missedChores = people.some(p => {
-        const assigned = p.chores.map(c => c.name);
-        const completed = p.completed || [];
-        return assigned.some(task => !completed.includes(task));
-      });
+      const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
+      const snapshotForDate = logs.find(
+        log => log.type === "weeklySnapshot" && new Date(log.time).toDateString() === date.toDateString()
+      );
+      
+      let missedChores = false;
+      if (snapshotForDate) {
+        missedChores = snapshotForDate.snapshot.some(p => {
+          return p.chores.some(task => !p.completed.includes(task));
+        });
+      }
+      
 
       if (isPast && missedChores) {
         cell.innerHTML += `<div class="calendar__missed" title="Missed chore(s)">🟥</div>`;

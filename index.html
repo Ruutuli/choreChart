@@ -45,7 +45,7 @@
       window.db = getFirestore(app);
 
       window.saveChoreData = async (householdId, data) => {
-        await setDoc(doc(window.db, "households", householdId), data);
+        await setDoc(doc(window.db, "households", householdId), data, { merge: true });
       };
 
       window.loadChoreData = async (householdId) => {
@@ -57,6 +57,12 @@
   </head>
 
   <body>
+
+    <div id="installBanner" class="install-banner hidden">
+      <p>📱 Add this app to your home screen: Tap <strong>Share</strong> → <strong>Add to Home Screen</strong></p>
+      <button onclick="dismissBanner()">Dismiss</button>
+    </div>
+  
     <div id="sandboxBanner" class="sandbox-banner hidden">
       🧪 Sandbox Mode Active — No changes will be saved
     </div>
