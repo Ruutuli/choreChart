@@ -135,20 +135,44 @@ function savePeople() {
   }
 }
 
-// ------------------- Function: logActivity -------------------
-// Pushes an event to the activity log with timestamp
-function logActivity(entry) {
+// ------------------- Function: logActivity (Firestore Version) -------------------
+async function logActivity(entry, householdId = "default") {
   if (isSandboxMode) {
     console.warn("[Sandbox Mode]: Prevented logActivity");
     return;
   }
 
-  console.log("[Activity Log]:", entry);
+  // Ensure time is present
+  if (!entry.time && !entry.date) {
+    entry.time = new Date().toISOString();
+  }
 
-  const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
-  logs.unshift(entry);
-  localStorage.setItem("activityLog", JSON.stringify(logs));
+  try {
+    const logRef = window.doc(window.db, "households", householdId, "logs", crypto.randomUUID());
+    await window.setDoc(logRef, entry);
+    console.log("📝 Logged to Firestore:", entry);
+
+    // ------------------- Inject Log Into UI Memory -------------------
+    if (!Array.isArray(window._localLogs)) {
+      window._localLogs = [];
+    }
+
+    window._localLogs.unshift(entry);
+    console.log("📌 Added to local logs:", entry);
+
+    // Only re-render if already viewing history
+    const historyPanel = document.getElementById("history");
+    if (historyPanel && !historyPanel.classList.contains("hidden") && typeof renderHistory === "function") {
+      console.log("🔁 Re-rendering history due to new log entry");
+      renderHistory(window._localLogs);
+    }
+
+  } catch (err) {
+    console.error("❌ Failed to log activity:", err);
+  }
 }
+
+
 
 // ------------------- Function: debouncedFirebaseSave -------------------
 // Saves data to Firebase with debounce delay
@@ -206,9 +230,9 @@ const updateChoreCycleStartDate = () => {
 
 // ------------------- Firebase Helper: Ensure Reset Timestamps Exist -------------------
 async function initializeResetTimestamps() {
-  const ref = firebase.database().ref("meta/lastReset");
-  const snapshot = await ref.once("value");
-  const existing = snapshot.val();
+  const docRef = window.doc(window.db, "meta", "lastReset");
+  const snapshot = await window.getDoc(docRef);
+  const existing = snapshot.exists() ? snapshot.data() : null;
 
   if (!existing) {
     const now = new Date().toISOString();
@@ -219,12 +243,13 @@ async function initializeResetTimestamps() {
       monthly: now,
       quarterly: now
     };
-    await ref.set(defaults);
-    console.log("🧱 Initialized meta.lastReset with default timestamps");
+    await window.setDoc(docRef, defaults);
+    console.log("🧱 Initialized meta/lastReset in Firestore");
   } else {
-    console.log("📦 meta.lastReset already exists:", existing);
+    console.log("📦 Firestore meta/lastReset already exists:", existing);
   }
 }
+
 
 
 // ============================================================================
@@ -271,18 +296,15 @@ function applySkipChore() {
   const person = people.find(p => p.name === name);
   if (!person) return showCustomAlert("⚠️ No person selected.");
 
-  // Log the skip event (optional)
-  const log = {
-    type: "skipped",
-    person: name,
-    duration,
-    reason,
-    time: new Date().toISOString()
-  };
+// Log the skip event to Firestore instead of localStorage
+logActivity({
+  type: "skipped",
+  person: name,
+  duration,
+  reason,
+  time: new Date().toISOString()
+});
 
-  const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
-  logs.unshift(log);
-  localStorage.setItem("activityLog", JSON.stringify(logs));
 
   // Store skip record (optional future use)
   if (!person.skipLog) person.skipLog = [];
@@ -304,7 +326,7 @@ const forceReassignChores = () => {
 
 // ============================================================================
 // ------------------- UI Rendering -------------------
-// Builds dashboard, calendar, and history from data
+// Builds dashboard, and history from data
 // ============================================================================
 
 // ------------------- Function: renderDashboard -------------------
@@ -472,7 +494,7 @@ const renderChore = (person) => (choreObj) => {
 
 // ------------------- Function: renderHistory -------------------
 // Displays the activity log history
-const renderHistory = () => {
+const renderHistory = (logs = []) => {
   const container = document.getElementById("historyContent");
   container.innerHTML = "";
 
@@ -523,8 +545,6 @@ const renderHistory = () => {
   container.appendChild(statDetails);
 
   // ------------------- Activity Log (Changelog) -------------------
-  const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
-
   const logCard = document.createElement("div");
   logCard.className = "history__card";
   logCard.innerHTML = `
@@ -533,8 +553,25 @@ const renderHistory = () => {
       ${logs.length === 0
         ? "<li>No activity logged.</li>"
         : logs.slice(0, 10).map(log => {
-          const date = new Date(log.time).toLocaleString();
-
+          let date = "Unknown Date";
+          try {
+            const parsed = new Date(log.time ?? log.date ?? null);
+            if (!isNaN(parsed.getTime())) {
+              date = parsed.toLocaleString(undefined, {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+                hour: "2-digit",
+                minute: "2-digit"
+              });
+            } else {
+              console.warn("⚠️ Invalid timestamp:", log.time, log);
+            }
+          } catch (e) {
+            console.warn("⚠️ Could not parse date for log entry", log, e);
+          }
+          
+          
           switch (log.type) {
             case "completed":
               return `<li>✅ <strong>${log.person}</strong> completed "<em>${log.task}</em>" — <span class="log-date">${date}</span></li>`;
@@ -553,7 +590,16 @@ const renderHistory = () => {
               return `<li>${icon} <strong>${log.person}</strong> marked as ${log.status} — <span class="log-date">${date}</span></li>`;
             case "sandbox":
               return `<li>${log.status === "enabled" ? "📴" : "🟢"} Sandbox Mode ${log.status === "enabled" ? "Enabled" : "Disabled"} — <span class="log-date">${date}</span></li>`;
-            default:
+              case "weeklySnapshot":
+                const summary = log.snapshot.map(p => {
+                  const assigned = p.chores?.length || 0;
+                  const completed = p.completed?.length || 0;
+                  return `- ${p.name}: ${assigned} assigned, ${completed} completed`;
+                }).join("<br>");
+                
+                return `<li>📦 Weekly Snapshot — <span class="log-date">${date}</span><br>${summary}</li>`;
+              
+              default:
               return `<li>📦 ${log.type} — ${JSON.stringify(log)} — <span class="log-date">${date}</span></li>`;
           }
         }).join("")}
@@ -595,95 +641,6 @@ const renderHistory = () => {
   });
 
   container.appendChild(peopleWrapper);
-};
-
-// ------------------- Function: renderCalendar -------------------
-// Renders full monthly calendar view with missed icons
-const renderCalendar = () => {
-  const container = document.getElementById("calendarContent");
-  container.innerHTML = "";
-
-  // ------------------- Date Setup -------------------
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth();
-
-  const firstDay = new Date(year, month, 1);
-  const lastDay = new Date(year, month + 1, 0);
-
-  const startDay = firstDay.getDay();
-  const totalDays = lastDay.getDate();
-  const totalCells = startDay + totalDays;
-  const totalWeeks = Math.ceil(totalCells / 7);
-  const totalCellsToRender = totalWeeks * 7;
-
-  // ------------------- Calendar Grid Setup -------------------
-  const calendarGrid = document.createElement("div");
-  calendarGrid.className = "calendar__grid";
-
-  const weekdays = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-  weekdays.forEach(day => {
-    const cell = document.createElement("div");
-    cell.className = "calendar__header";
-    cell.textContent = day;
-    calendarGrid.appendChild(cell);
-  });
-
-  // ------------------- Build Calendar Cells -------------------
-  for (let i = 0; i < totalCellsToRender; i++) {
-    const cell = document.createElement("div");
-
-    if (i < startDay) {
-      cell.className = "calendar__cell empty";
-    } else {
-      const day = i - startDay + 1;
-      const date = new Date(year, month, day);
-      date.setHours(0, 0, 0, 0);
-      cell.className = "calendar__cell";
-
-      // ------------------- Weekly & Biweekly Icons -------------------
-      if (date.getDay() === 0) {
-        // 🔁 Weekly reset icon
-        cell.innerHTML += `<div class="calendar__icon" title="Weekly Reset">🔁</div>`;
-
-        // 🌀 Biweekly check (based on 2025-01-05 anchor Sunday)
-        const anchorSunday = new Date("2025-01-05T00:00:00");
-        const daysBetween = Math.floor((date - anchorSunday) / (1000 * 60 * 60 * 24));
-        const weeksBetween = Math.floor(daysBetween / 7);
-        if (weeksBetween % 2 === 0) {
-          cell.innerHTML += `<div class="calendar__biweekly" title="Biweekly Reset">🌀</div>`;
-        }
-      }
-
-      // ------------------- Missed Chore Detection -------------------
-      const isPast = date < now;
-      const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
-
-      const snapshotForDate = logs.find(
-        log => log.type === "weeklySnapshot" &&
-        new Date(log.time).toDateString() === date.toDateString()
-      );
-
-      let missedChores = false;
-      if (snapshotForDate) {
-        missedChores = snapshotForDate.snapshot.some(p =>
-          p.chores.some(task => !p.completed.includes(task))
-        );
-      }
-
-      if (isPast && missedChores) {
-        cell.innerHTML += `<div class="calendar__missed" title="Missed chore(s)">🟥</div>`;
-      }
-
-      // ------------------- Final Date Number -------------------
-      cell.innerHTML += `<div class="calendar__date">${day}</div>`;
-    }
-
-    calendarGrid.appendChild(cell);
-  }
-
-  // ------------------- Final Append -------------------
-  container.appendChild(calendarGrid);
 };
 
 
@@ -811,13 +768,17 @@ const closeModal = () => {
 };
 
 // ------------------- Function: showSection -------------------
-// Shows one section and hides others (dashboard, history, calendar, admin)
-const showSection = (idToShow) => {
-  const sections = ["dashboard", "history", "calendar", "admin"];
-
+// Shows one section and hides others (dashboard, history, admin)
+const showSection = async (idToShow) => {
+  const sections = ["dashboard", "history", "admin"];
+  
   sections.forEach(id => {
     const el = document.getElementById(id);
-    el.classList.toggle("hidden", id !== idToShow);
+    if (el) {
+      el.classList.toggle("hidden", id !== idToShow);
+    } else {
+      console.warn(`⚠️ Element with id '${id}' not found in DOM`);
+    }
 
     if (id === "dashboard" && idToShow !== "dashboard") {
       document.getElementById("dashboardContent").innerHTML = "";
@@ -833,12 +794,18 @@ const showSection = (idToShow) => {
     banner.remove();
   }
 
-  if (idToShow === "dashboard") renderDashboard();
-  if (idToShow === "history") renderHistory();
-  if (idToShow === "calendar") renderCalendar();
-  if (idToShow === "admin") populateAdminDropdowns();
+  if (idToShow === "dashboard") {
+    renderDashboard();
+  } else if (idToShow === "history") {
+    if (!Array.isArray(window._localLogs) || window._localLogs.length === 0) {
+      window._localLogs = await fetchActivityLogsFromFirestore("myHouseholdId");
+    }
+    renderHistory(window._localLogs);
+       
+  } else if (idToShow === "admin") {
+    populateAdminDropdowns();
+  }
 
-  // Auto-close sidebar and modals
   document.getElementById("sidebar")?.classList.remove("open");
   document.querySelectorAll(".modal.show").forEach(modal => modal.classList.remove("show"));
 };
@@ -850,12 +817,6 @@ const viewHistory = () => {
   toggleSidebar();
 };
 
-// ------------------- Function: viewCalendar -------------------
-// Shows the calendar view and closes sidebar
-const viewCalendar = () => {
-  toggleSidebar();
-  showSection("calendar");
-};
 
 // ------------------- Function: openReassignModal -------------------
 // Opens the reassignment confirmation dialog
@@ -885,8 +846,8 @@ const openSkipChoreModal = () => {
 
 // ------------------- Function: openWeeklySummaryModal -------------------
 // Displays chore stats for the current week
-const openWeeklySummaryModal = () => {
-  const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
+const openWeeklySummaryModal = async () => {
+  const logs = await fetchActivityLogsFromFirestore("myHouseholdId");
   const start = new Date(getStartOfWeek());
 
   const thisWeekLogs = logs.filter(log => new Date(log.time) >= start);
@@ -968,8 +929,8 @@ const confirmDollarAdjustment = () => {
 
 // ------------------- Function: openPreviewResetModal -------------------
 // Displays preview of weekly reset effect
-const openPreviewResetModal = () => {
-  const skippedNames = getSkippedPeopleThisWeek();
+const openPreviewResetModal = async () => { // ✅ add async
+  const skippedNames = await getSkippedPeopleThisWeek(); // ✅ add await
   const preview = people.map(p => {
     const isSkipped = skippedNames.includes(p.name.toLowerCase());
     return `<li><strong>${p.name}</strong>: ${isSkipped ? "⏸ Skipped (no reset)" : "✅ Will reset chores"}</li>`;
@@ -981,8 +942,8 @@ const openPreviewResetModal = () => {
 
 // ------------------- Function: getSkippedPeopleThisWeek -------------------
 // Returns array of people who opted out of this week
-const getSkippedPeopleThisWeek = () => {
-  const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
+const getSkippedPeopleThisWeek = async () => {
+  const logs = await fetchActivityLogsFromFirestore("myHouseholdId");
 
   return logs
     .filter(log =>
@@ -1312,27 +1273,47 @@ function shouldReset(frequency, lastResetDate = null) {
   }
 }
 
+// ------------------- Function: fetchActivityLogsFromFirestore -------------------
+async function fetchActivityLogsFromFirestore(householdId = "default") {
+  try {
+    const logsCollectionRef = window.collection(window.db, "households", householdId, "logs");
+    const snapshot = await window.getDocs(logsCollectionRef);
+    const logs = snapshot.docs.map(doc => doc.data());
+
+    return logs.sort((a, b) => new Date(b.time || b.date) - new Date(a.time || a.date));
+  } catch (err) {
+    console.error("❌ Failed to fetch activity logs:", err);
+    return [];
+  }
+}
+
+
+// 🔁 Make available globally
+window.fetchActivityLogsFromFirestore = fetchActivityLogsFromFirestore;
+
+
 // ------------------- Auto Weekly Reset (Firebase Synced) -------------------
 async function autoResetIfNeeded() {
-  const metaRef = firebase.database().ref("meta/lastReset");
-  const snapshot = await metaRef.once("value");
-  const lastResetStr = snapshot.val();
+  const docRef = window.doc(window.db, "meta", "lastReset"); // ✅ Use Firestore doc ref
+  const snapshot = await window.getDoc(docRef); // ✅ Use Firestore getDoc
+
+  const existing = snapshot.exists() ? snapshot.data() : null;
   const now = new Date();
-  const isSunday = now.getDay() === 0;
 
   let shouldReset = false;
 
-  if (!lastResetStr) {
+  if (!existing || !existing.weekly) {
     console.log("⚠️ No lastReset timestamp found. Performing first reset.");
     shouldReset = true;
   } else {
-    const lastReset = lastResetStr; // already an object with .daily, .weekly, etc
-    const daysSinceReset = (now - lastReset) / (1000 * 60 * 60 * 24);
+    const lastResetDate = new Date(existing.weekly);
+    const daysSinceReset = (now - lastResetDate) / (1000 * 60 * 60 * 24);
+    const isSunday = now.getDay() === 0;
     shouldReset = isSunday && daysSinceReset >= 7;
   }
 
   if (shouldReset) {
-    console.log("⏰ Auto-reset triggered (Firebase synced)");
+    console.log("⏰ Auto-reset triggered");
 
     reassignRotatingChores();
     assignAllChores();
@@ -1345,15 +1326,16 @@ async function autoResetIfNeeded() {
     savePeople();
     debouncedFirebaseSave();
 
-    const updatedTimestamps = {
-      daily: now.toISOString(),
-      weekly: now.toISOString(),
-      biweekly: now.toISOString(),
-      monthly: now.toISOString(),
-      quarterly: now.toISOString()
+    const nowISO = now.toISOString();
+    const updated = {
+      daily: nowISO,
+      weekly: nowISO,
+      biweekly: nowISO,
+      monthly: nowISO,
+      quarterly: nowISO
     };
-    await metaRef.set(updatedTimestamps);
-    
+    await window.setDoc(docRef, updated, { merge: true }); // ✅ Write to Firestore
+
     showCustomAlert("🔁 Auto-reset: Chores and progress reset for the week.");
   } else {
     console.log("📅 No auto-reset needed today.");
@@ -1474,21 +1456,42 @@ function manualResetChores() {
 // ------------------- Function: confirmResetAll -------------------
 // Wrapper: Wipes all and resets without missed logging
 function confirmResetAll() {
-  reassignRotatingChores(); // ✅ Regenerate rotating assignments
-  assignAllChores(); // ✅ Then assign all
+  reassignRotatingChores();
+  assignAllChores();
 
   people.forEach(p => {
     p.completed = [];
     p.dollarsOwed = 0;
-    p.paid = true; // or false, depending on your preference
+    p.paid = true;
   });
 
   savePeople();
   debouncedFirebaseSave();
+
+  clearActivityLogs("myHouseholdId"); // ✅ Wipe Firestore logs too
+
   showSection("admin");
   closeModal();
-  updateLastUpdatedText(); // ✅ ADD HERE
-  showCustomAlert("🧹 All chores, payments, and completions reset.");
+  updateLastUpdatedText();
+  showCustomAlert("🧹 All chores, payments, completions, and logs reset.");
+}
+// ------------------- Function: clearActivityLogs -------------------
+// Deletes all activity logs for the household in Firestore
+async function clearActivityLogs(householdId = "default") {
+  try {
+    const logsCollection = firebase.firestore().collection("households").doc(householdId).collection("logs");
+    const snapshot = await logsCollection.get();    
+
+    const batch = window.writeBatch(window.db);
+    snapshot.forEach(doc => {
+      batch.delete(doc.ref);
+    });
+
+    await batch.commit();
+    console.log("🧹 Cleared all activity logs from Firestore.");
+  } catch (err) {
+    console.error("❌ Failed to clear activity logs:", err);
+  }
 }
 
 // ------------------- Function: reassignRotatingChores -------------------
@@ -1518,13 +1521,8 @@ function reassignRotatingChores() {
 
   missed.forEach(entry => {
     console.log(`⚠️ ${entry.person} missed ${entry.amount} chores`);
-    logActivity({
-      type: "missedChores",
-      person: entry.person,
-      amount: entry.amount
-    });
   });
-
+  
   const now = new Date();
   logActivity({
     type: "weeklySnapshot",
@@ -1738,7 +1736,6 @@ window.toggleAutoReset           = toggleAutoReset;
 window.togglePaid                = togglePaid;
 window.toggleSandboxMode         = toggleSandboxMode;
 window.toggleSidebar             = toggleSidebar;
-window.viewCalendar              = viewCalendar;
 window.viewHistory               = viewHistory;
 
 // ------------------- Function: refreshChorePage -------------------

@@ -5,84 +5,110 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <!-- ====================================================================== -->
-    <!-- Head: Meta, Manifest, Styles, Firebase Setup                          -->
-    <!-- ====================================================================== -->
+<!-- ====================================================================== -->
+<!-- Head: Meta, Manifest, Styles, Firebase Setup                          -->
+<!-- ====================================================================== -->
+<head>
+  <!-- ------------------- Meta Tags ------------------- -->
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#34d399" />
+  <meta name="mobile-web-app-capable" content="yes" />
 
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#34d399" />
-    <meta name="mobile-web-app-capable" content="yes" />
+  <!-- ------------------- Title & Manifest ------------------- -->
+  <title>Family Chore Tracker</title>
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icons/icon-192.png" />
 
-    <title>Family Chore Tracker</title>
+  <!-- ------------------- Styles & Fonts ------------------- -->
+  <link rel="stylesheet" href="style.css" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap"
+    rel="stylesheet"
+  />
+  <script src="https://kit.fontawesome.com/262000d25d.js" crossorigin="anonymous"></script>
 
-    <link rel="manifest" href="manifest.json" />
-    <link rel="apple-touch-icon" href="icons/icon-192.png" />
-    <link rel="stylesheet" href="style.css" />
-    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap" rel="stylesheet" />
-    <script src="https://kit.fontawesome.com/262000d25d.js" crossorigin="anonymous"></script>
+  <!-- ------------------- Firebase SDK (v10 Module) ------------------- -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+    import {
+      getFirestore,
+      doc,
+      getDoc,
+      setDoc,
+      writeBatch,   // ✅ Add this
+      getDocs,      // ✅ Required for await getDocs
+      collection    // ✅ Required for collection()
+    } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
+    import {
+      getDatabase,
+      ref,
+      get,
+      set
+    } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-database.js";
+  
+    // ------------------- Firebase Config & Init -------------------
+    const firebaseConfig = {
+      apiKey: "AIzaSyCk9B5LZw6G5fig_7rwCTxnOCwC0UMmWOo",
+      authDomain: "choretracker-d05ba.firebaseapp.com",
+      projectId: "choretracker-d05ba",
+      storageBucket: "choretracker-d05ba.appspot.com",
+      messagingSenderId: "262712306884",
+      appId: "1:262712306884:web:bb79dfb5fbc5ce32de6d91"
+    };
+  
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const rtdb = getDatabase(app);
+  
+    // ------------------- Global Access -------------------
+    window.db = db;
+    window.rtdb = rtdb;
+  
+    // Firestore helpers for use in non-module scripts
+    window.doc = doc;
+    window.getDoc = getDoc;
+    window.setDoc = setDoc;
+    window.writeBatch = writeBatch;
+    window.collection = collection;
+    window.getDocs = getDocs;
+  
+    // ------------------- Chore Data Helpers -------------------
+    window.saveChoreData = async (householdId, data) => {
+      if (!data || !Array.isArray(data.people)) {
+        console.error("❌ Invalid data format passed to saveChoreData:", data);
+        throw new Error("Invalid data for Firebase");
+      }
+  
+      const sanitizedPeople = data.people.map(p => ({
+        id: p.id ?? "",
+        name: p.name ?? "",
+        chores: Array.isArray(p.chores) ? p.chores : [],
+        completed: Array.isArray(p.completed) ? p.completed : [],
+        dollarsOwed: typeof p.dollarsOwed === "number" ? p.dollarsOwed : 0,
+        paid: !!p.paid,
+        phone: p.phone ?? "",
+        carrier: p.carrier ?? "",
+        color: p.color ?? "#999999",
+        skipLog: Array.isArray(p.skipLog) ? p.skipLog : []
+      }));
+  
+      await setDoc(doc(db, "households", householdId), {
+        people: sanitizedPeople
+      }, { merge: true });
+    };
+  
+    window.loadChoreData = async (householdId) => {
+      const docRef = doc(db, "households", householdId);
+      const snapshot = await getDoc(docRef);
+      return snapshot.exists() ? snapshot.data() : null;
+    };
+  </script>
+  
+</head>
 
-    <!-- Firebase SDK & Global Helpers -->
-    <script type="module">
-      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
-      import {
-        getFirestore,
-        doc,
-        getDoc,
-        setDoc
-      } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
-
-      const firebaseConfig = {
-        apiKey: "AIzaSyCk9B5LZw6G5fig_7rwCTxnOCwC0UMmWOo",
-        authDomain: "choretracker-d05ba.firebaseapp.com",
-        projectId: "choretracker-d05ba",
-        storageBucket: "choretracker-d05ba.appspot.com",
-        messagingSenderId: "262712306884",
-        appId: "1:262712306884:web:bb79dfb5fbc5ce32de6d91"
-      };
-
-      const app = initializeApp(firebaseConfig);
-      window.db = getFirestore(app);
-
-      window.saveChoreData = async (householdId, data) => {
-  if (!data || !Array.isArray(data.people)) {
-    console.error("❌ Invalid data format passed to saveChoreData:", data);
-    throw new Error("Invalid data for Firebase");
-  }
-
-  const sanitizedPeople = data.people.map(p => ({
-    id: p.id ?? "",
-    name: p.name ?? "",
-    chores: Array.isArray(p.chores) ? p.chores : [],
-    completed: Array.isArray(p.completed) ? p.completed : [],
-    dollarsOwed: typeof p.dollarsOwed === "number" ? p.dollarsOwed : 0,
-    paid: !!p.paid,
-    phone: p.phone ?? "",
-    carrier: p.carrier ?? "",
-    color: p.color ?? "#999999",
-    skipLog: Array.isArray(p.skipLog) ? p.skipLog : []
-  }));
-
-  await setDoc(doc(window.db, "households", householdId), { people: sanitizedPeople }, { merge: true });
-};
-
-
-      window.loadChoreData = async (householdId) => {
-        const docRef = doc(window.db, "households", householdId);
-        const snapshot = await getDoc(docRef);
-        return snapshot.exists() ? snapshot.data() : null;
-      };
-    </script>
-
-  </head>
 
   <body>
-
-    <div id="installBanner" class="install-banner hidden">
-      <p>📱 Add this app to your home screen: Tap <strong>Share</strong> → <strong>Add to Home Screen</strong></p>
-      <button onclick="dismissBanner()">Dismiss</button>
-    </div>
-  
     <div id="sandboxBanner" class="sandbox-banner hidden">
       🧪 Sandbox Mode Active — No changes will be saved
     </div>
@@ -107,10 +133,6 @@
       <i class="fas fa-chart-bar"></i> Stats
     </button>    
 
-    <button class="sidebar__action" onclick="viewCalendar()" title="See when chores reset or rotate">
-      <i class="fas fa-calendar-alt"></i> Calendar View
-    </button>
-
     <button class="sidebar__action" onclick="showSection('admin')" title="Admin Tools">
       <i class="fas fa-tools"></i> Admin
     </button>
@@ -123,23 +145,22 @@
     <!-- Header: App Title & Menu Toggle                                       -->
     <!-- ====================================================================== -->
     <header class="header">
-      <div class="header__left">
+      <div class="header__top-row">
         <button class="header__menu" onclick="toggleSidebar()">
           <i class="fas fa-bars"></i>
         </button>
-      </div>
     
-      <div class="header__center">
-        <h1 class="header__title">
-          <i class="fas fa-house-user"></i> Family Chore Tracker
-        </h1>
-      </div>
-    
-      <div class="header__right">
         <i class="fas fa-sync-alt refresh-icon" onclick="refreshChorePage()" title="Refresh Page"></i>
-        <span id="lastUpdatedText" class="updated-timestamp">Last updated: --</span>
       </div>
+    
+      <h1 class="header__title">
+        <i class="fas fa-house-user"></i> Family Chore Tracker
+      </h1>
+    
+      <p id="lastUpdatedText" class="updated-timestamp">Last updated: --</p>
     </header>
+    
+    
 
     <!-- ====================================================================== -->
     <!-- Main Content Container                                                -->
@@ -167,21 +188,7 @@
         <div id="historyContent" class="history__container"></div>
       </section>
 
-      <!-- ==================================================================== -->
-      <!-- 03. Calendar Section — Visualize Chore Weeks                        -->
-      <!-- ==================================================================== -->
-      <section id="calendar" class="calendar-section hidden">
-        <h2 class="section-title"><i class="fas fa-calendar-alt"></i> Calendar View</h2>
-        <div class="back-btn-wrapper">
-          <button class="back-btn" onclick="showSection('dashboard')">
-            <i class="fas fa-home"></i> Dashboard
-          </button>
-        </div>
-        <div class="calendar__container">
-          <div id="calendarContent"></div> <!-- JS will insert .calendar__grid -->
-        </div>
-      </section>
-
+      
 <!-- ==================================================================== -->
 <!-- 04. Admin Section — Manual Overrides, Resets, Edits                -->
 <!-- ==================================================================== -->
