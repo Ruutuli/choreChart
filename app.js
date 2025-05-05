@@ -11,8 +11,14 @@ function savePeople() {
     console.warn("[Sandbox Mode]: Prevented savePeople");
     return;
   }
-  localStorage.setItem("people", JSON.stringify(people));
+
+  if (typeof window.saveChoreData === "function") {
+    return window.saveChoreData("myHouseholdId", { people });
+  } else {
+    console.warn("[savePeople]: ⚠️ Firebase save function not available.");
+  }
 }
+
 
 // assignRotatingChores
 function assignRotatingChores() {
@@ -27,11 +33,12 @@ function logActivity(entry) {
     return;
   }
 
+  console.log("[Activity Log]:", entry);
+
   const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
-  logs.unshift({ ...entry, time: new Date().toISOString() });
+  logs.unshift(entry);
   localStorage.setItem("activityLog", JSON.stringify(logs));
 }
-
 
 // populateAdminDollarSelect
 function populateAdminDollarSelect() {
@@ -66,6 +73,23 @@ function populateAdminDollarSelect() {
   });
 }
 
+// ------------------- Debounced Firebase Save -------------------
+let saveTimeout = null;
+function debouncedFirebaseSave(delay = 1000) {
+  clearTimeout(saveTimeout);
+
+  saveTimeout = setTimeout(() => {
+    window.saveChoreData("myHouseholdId", { people })
+      .then(() => {
+        console.log("[Firebase]: ✅ Data synced");
+        showCustomAlert("✅ Changes saved");
+      })
+      .catch(err => {
+        console.error("[Firebase]: ❌ Save failed", err);
+        showCustomAlert("⚠️ Failed to sync with cloud");
+      });
+  }, delay);
+}
 /* ============================================================================
    01. Time & Chore Cycle Logic
 ============================================================================ */
@@ -92,7 +116,6 @@ const isBiweeklyWeek = () => {
 // shouldReassignRotatingChores
 // Checks if a new weekly cycle has started since last recorded.
 const shouldReassignRotatingChores = () => {
-  const storedStart = localStorage.getItem("choreCycleStartDate");
   const currentStart = getStartOfWeek();
   return storedStart !== currentStart;
 };
@@ -118,7 +141,6 @@ function reassignRotatingChores() {
 // Sets localStorage to the current week's start date (Sunday).
 const updateChoreCycleStartDate = () => {
   const currentStart = getStartOfWeek();
-  localStorage.setItem("choreCycleStartDate", currentStart);
 };
 
 // autoResetChoresIfNeeded
@@ -130,7 +152,6 @@ const autoResetChoresIfNeeded = () => {
     now.getHours() === 0 &&
     now.getMinutes() === 0;
 
-  const storedStart = localStorage.getItem("choreCycleStartDate");
   const currentStart = getStartOfWeek();
 
   if (isSundayMidnight && storedStart !== currentStart) {
@@ -141,8 +162,8 @@ const autoResetChoresIfNeeded = () => {
       p.completed = [];
     });
 
-    localStorage.setItem("choreData", JSON.stringify(people));
-    renderDashboard();
+    savePeople(); // <-- This is the proper global function used elsewhere
+    renderDashboard();    
   }
 };
 
@@ -187,8 +208,24 @@ function saveEditedChores() {
   if (person) {
     person.completed = tasks;
     savePeople();
-    showCustomAlert("✅ Completed chores updated.");
-    closeEditChoresModal();
+
+    if (typeof window.saveChoreData === "function") {
+      window.saveChoreData("myHouseholdId", { people }).then(() => {
+        showCustomAlert("✅ Completed chores updated.");
+        closeEditChoresModal();
+        renderDashboard();
+      }).catch(err => {
+        console.error("[saveEditedChores]: ❌ Firebase sync failed", err);
+        showCustomAlert("⚠️ Saved locally but not synced.");
+        closeEditChoresModal();
+        renderDashboard();
+      });
+    } else {
+      showCustomAlert("✅ Completed chores updated.");
+      closeEditChoresModal();
+      renderDashboard();
+    }
+
   }
 }
 
@@ -201,58 +238,153 @@ function previewReset() {
   showCustomAlert("Reset Preview:\n\n" + preview);
 }
 
-// confirmResetAll
+// ------------------- Reset Everything -------------------
 function confirmResetAll() {
-  closeModal(); // ✅ This hides the modal
+  closeModal();
 
-  people.forEach(p => {
-    p.chores = [];
-    p.completed = [];
+  const rotatingChores = choreData.rotating || [];
+  const totalRotating = rotatingChores.length;
+  const peopleCount = people.length;
+
+  // Distribute rotating chores in round-robin
+  const rotatingAssignments = Array.from({ length: peopleCount }, () => []);
+  for (let i = 0; i < totalRotating; i++) {
+    const personIndex = i % peopleCount;
+    rotatingAssignments[personIndex].push(rotatingChores[i]);
+  }
+
+  people.forEach((p, index) => {
     p.dollarsOwed = 0;
     p.paid = false;
-  });
+    p.completed = [];
 
-  localStorage.removeItem("activityLog");
-  localStorage.removeItem("autoResetDisabled");
-  savePeople();
+    const newChores = [];
 
-  showCustomAlert("🗑️ All data reset.");
-  renderDashboard();
-}
+    let permanent = [];
+    const match = Object.entries(choreData.permanent || {}).find(([key]) =>
+      key.toLowerCase() === p.name.toLowerCase()
+    );
+    if (match) permanent = match[1];
+    
 
-// manualResetChores
-function manualResetChores() {
-  const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
-
-  const skippedPeople = logs
-    .filter(log =>
-      log.type === "skipped" &&
-      ["day", "week"].includes(log.duration) &&
-      new Date(log.time) >= new Date(getStartOfWeek())
-    )
-    .map(log => log.person.toLowerCase());
-
-  people.forEach(p => {
-    if (skippedPeople.includes(p.name.toLowerCase())) {
-      console.log(`[manual reset]: Skipped ${p.name} due to active skip`);
-      return;
+    for (const chore of permanent) {
+      const taskName = chore.task ?? chore.name ?? "Unnamed Task";
+      newChores.push({
+        name: taskName,
+        task: taskName,
+        type: chore.type ?? "unspecified",
+        origin: "permanent"
+      });
     }
 
-    p.completed = [];
+    for (const chore of rotatingAssignments[index]) {
+      const taskName = chore.task ?? chore.name ?? "Unnamed Task";
+      newChores.push({
+        name: taskName,
+        task: taskName,
+        type: chore.type ?? "unspecified",
+        origin: "rotating"
+      });
+    }
+
+    p.chores = newChores;
   });
 
-  logActivity({
-    type: "manualReset",
-    time: new Date().toISOString()
-  });
+  logActivity({ type: "manualReset", time: new Date().toISOString() });
 
-  savePeople();
-  showCustomAlert("🔁 Chores manually reset.");
-
-  // Only re-render dashboard if currently visible
-  const currentSection = document.querySelector("main > section:not(.hidden)");
-  if (currentSection?.id === "dashboard") {
+  if (typeof window.saveChoreData === "function") {
+    window.saveChoreData("myHouseholdId", { people }).then(() => {
+      renderDashboard();
+      showCustomAlert("🗑️ All data reset and reassigned.");
+    }).catch(err => {
+      console.error("[confirmResetAll]: ❌ Firebase sync failed", err);
+      renderDashboard();
+      showCustomAlert("⚠️ Reset saved locally but not synced.");
+    });
+  } else {
     renderDashboard();
+    showCustomAlert("🗑️ All data reset and reassigned.");
+  }
+}
+
+// ------------------- Manual Reset Chores -------------------
+function manualResetChores() {
+  const rotatingChores = choreData.rotating || [];
+  const totalRotating = rotatingChores.length;
+  const peopleCount = people.length;
+
+  // Distribute rotating chores in round-robin
+  const rotatingAssignments = Array.from({ length: peopleCount }, () => []);
+  for (let i = 0; i < totalRotating; i++) {
+    const personIndex = i % peopleCount;
+    rotatingAssignments[personIndex].push(rotatingChores[i]);
+  }
+
+  people.forEach((p, index) => {
+    const missedChores = Array.isArray(p.completed)
+      ? p.chores?.filter(c => !p.completed.includes(c.name)).length || 0
+      : p.chores?.length || 0;
+
+      if (missedChores > 0) {
+        logActivity({
+          type: "missedChores",
+          person: p.name,
+          amount: missedChores,
+          time: new Date().toISOString()
+        });
+      }
+      
+
+    p.dollarsOwed = (p.dollarsOwed || 0) + missedChores;
+    p.paid = false;
+    p.completed = [];
+
+    const newChores = [];
+
+    let permanent = [];
+    const match = Object.entries(choreData.permanent || {}).find(([key]) =>
+      key.toLowerCase() === p.name.toLowerCase()
+    );
+    if (match) permanent = match[1];
+    
+
+    for (const chore of permanent) {
+      const taskName = (chore.task || chore.name || "Unnamed Task");
+      newChores.push({
+        name: taskName,
+        task: taskName,
+        type: chore.type ?? "unspecified",
+        origin: "permanent"
+      });
+    }
+
+    for (const chore of rotatingAssignments[index]) {
+      const taskName = chore.task ?? chore.name ?? "Unnamed Task";
+      newChores.push({
+        name: taskName,
+        task: taskName,
+        type: chore.type ?? "unspecified",
+        origin: "rotating"
+      });
+    }
+
+    p.chores = newChores;
+  });
+
+  logActivity({ type: "manualReset", time: new Date().toISOString() });
+
+  if (typeof window.saveChoreData === "function") {
+    window.saveChoreData("myHouseholdId", { people }).then(() => {
+      renderDashboard();
+      showCustomAlert("🔁 Weekly reset complete. Missed chore amounts updated.");
+    }).catch(err => {
+      console.error("[manualResetChores]: ❌ Firebase sync failed", err);
+      renderDashboard();
+      showCustomAlert("⚠️ Weekly reset saved locally but not synced.");
+    });
+  } else {
+    renderDashboard();
+    showCustomAlert("🔁 Weekly reset complete. Missed chore amounts updated.");
   }
 }
 
@@ -309,8 +441,7 @@ function applySkipChore() {
 const forceReassignChores = () => {
   logActivity({ type: "reassigned", triggeredBy: "admin" });
 
-  localStorage.removeItem("choreCycleStartDate");
-  localStorage.removeItem("choreData");
+
   showCustomAlert("Rotating chores cleared. Reload manually if needed.");
 };
 
@@ -447,7 +578,7 @@ card.appendChild(paidBtn);
 // ------------------- Render Chore -------------------
 const renderChore = (person) => (choreObj) => {
   const { name, type, locked } = choreObj;
-  const isDone = person.completed?.includes(name);
+  const isDone = Array.isArray(person.completed) && person.completed.includes(name);
   const isDraggable = !isDone && !locked;
   const originalOwner = choreObj.originalOwner || null;
   const displayName = originalOwner ? `${name} (${originalOwner})` : name;
@@ -550,13 +681,17 @@ const renderHistory = () => {
               return `<li>😴 <strong>${log.person}</strong>'s chores skipped for the ${log.duration} <em>(${log.reason})</em> — <span class="log-date">${date}</span></li>`;
             case "manualReset":
               return `<li>🧹 Manual chore reset triggered — <span class="log-date">${date}</span></li>`;
+            case "missedChores":
+              return `<li>📛 <strong>${log.person}</strong> missed <strong>${log.amount}</strong> chore(s) — <span class="log-date">${date}</span></li>`;
+            case "togglePaid":
+              const icon = log.status === "paid" ? "💵" : "🚫";
+              return `<li>${icon} <strong>${log.person}</strong> marked as ${log.status} — <span class="log-date">${date}</span></li>`;
             case "sandbox":
               return `<li>${log.status === "enabled" ? "📴" : "🟢"} Sandbox Mode ${log.status === "enabled" ? "Enabled" : "Disabled"} — <span class="log-date">${date}</span></li>`;
             default:
               return `<li>📦 ${log.type} — ${JSON.stringify(log)} — <span class="log-date">${date}</span></li>`;
           }
         }).join("")
-        
       }
     </ul>
   `;
@@ -694,7 +829,7 @@ const completeChore = (name, choreName) => {
   } else {
     person.completed.push(choreName);
     console.log(`[app.js]: ✅ Marked '${choreName}' as completed for ${person.name}`);
-  
+
     logActivity({
       type: "completed",
       person: person.name,
@@ -702,21 +837,53 @@ const completeChore = (name, choreName) => {
     });
   }
 
-
-  localStorage.setItem("choreData", JSON.stringify(people));
-  renderDashboard();
+  // Save to Firebase only, then update UI
+  if (typeof window.saveChoreData === "function") {
+    window.saveChoreData("myHouseholdId", { people }).then(() => {
+      renderDashboard();
+      showCustomAlert("✅ Chore updated");
+    }).catch(err => {
+      console.error("[completeChore]: ❌ Firebase sync failed", err);
+      renderDashboard();
+      showCustomAlert("⚠️ Saved locally only (sync failed)");
+    });
+  } else {
+    console.warn("[completeChore]: ⚠️ Firebase save function not found.");
+    renderDashboard();
+  }
 };
 
 // togglePaid
-// Toggles paid state for a person and updates localStorage + UI
+// Toggles paid state for a person and updates Firebase + UI
 const togglePaid = (name) => {
   const person = people.find(p => p.name === name);
   if (!person) return;
+
   person.paid = !person.paid;
 
-  localStorage.setItem("choreData", JSON.stringify(people));
-  renderDashboard();
+  logActivity({
+    type: "togglePaid",
+    person: person.name,
+    status: person.paid ? "paid" : "unpaid",
+    time: new Date().toISOString()
+  });
+  
+
+  if (typeof window.saveChoreData === "function") {
+    window.saveChoreData("myHouseholdId", { people }).then(() => {
+      renderDashboard();
+      showCustomAlert(`💵 ${name} marked as ${person.paid ? "Paid" : "Unpaid"}`);
+    }).catch(err => {
+      console.error("[togglePaid]: ❌ Firebase sync failed", err);
+      renderDashboard();
+      showCustomAlert("⚠️ Paid status saved locally only");
+    });
+  } else {
+    console.warn("[togglePaid]: ⚠️ Firebase save function not found.");
+    renderDashboard();
+  }
 };
+
 
 /* ============================================================================
    05. Sidebar & Modal Control
@@ -925,8 +1092,7 @@ const getSkippedPeopleThisWeek = () => {
 const confirmReassign = () => {
   logActivity({ type: "reassigned", triggeredBy: "admin" });
 
-  localStorage.removeItem("choreCycleStartDate");
-  localStorage.removeItem("choreData");
+
   closeModal();
 
   showCustomAlert("Rotating chores cleared. Reload manually if needed.");
@@ -1107,8 +1273,8 @@ const onDrop = (event, toId) => {
 
   helper.dollarsOwed = Math.max((helper.dollarsOwed || 0) - 1, 0);
 
-  localStorage.setItem("choreData", JSON.stringify(people));
-  renderDashboard();
+  savePeople(); // <-- This is the proper global function used elsewhere
+  renderDashboard();  
   draggedChoreInfo = null;
 };
 
@@ -1120,6 +1286,7 @@ const onDrop = (event, toId) => {
 // ------------------- Global Variables -------------------
 let people = [];
 let savedPeople = [];
+let choreData = {}; // ✅ <--- ADD THIS LINE
 
 // ------------------- Sandbox Mode -------------------
 const isSandboxMode = localStorage.getItem("sandboxMode") === "true";
@@ -1143,107 +1310,35 @@ setInterval(autoResetChoresIfNeeded, 60000); // Check every 60 seconds
   try {
     // Attempt to load from cloud sync (Firebase)
     const cloudData = await window.loadChoreData("myHouseholdId");
-    savedPeople = cloudData?.people || [];
+    savedPeople = (cloudData && cloudData.people) || [];
   } catch (err) {
-    console.error("[app.js]: ⚠️ Failed to load from Firebase. Falling back to localStorage.", err);
-    const localData = localStorage.getItem("choreData");
-    savedPeople = localData ? JSON.parse(localData) : [];
+    console.error("[app.js]: ❌ Failed to load from Firebase. Cannot continue.", err);
+    showCustomAlert("❌ Could not load chore data from cloud.");
+    return;
   }
 
   // Fetch data.json from project (permanent + rotating chore templates)
   fetch("data.json")
-    .then(res => {
-      if (!res.ok) throw new Error("Invalid response from data.json");
-      return res.json();
-    })
-    .then(async (data) => {
-      const { people: personList, chores } = data;
-      const isNewWeek = shouldReassignRotatingChores();
+  .then(res => {
+    if (!res.ok) throw new Error("Invalid response from data.json");
+    return res.json();
+  })
+  .then(async (data) => {
+    const cloudData = await window.loadChoreData("myHouseholdId");
+    if (!cloudData || !Array.isArray(cloudData.people)) {
+      throw new Error("❌ Firebase returned no people data.");
+    }
 
-      people = personList.map((person, index) => {
-        const baseChores = (chores.permanent?.[person.id] || []).map(c => ({
-          name: c.task,
-          type: c.type,
-          origin: "permanent"
-        }));
-      
-        const savedPerson = savedPeople.find(p => p.id === person.id) || {};
-        let rotatingChores = [];
-      
-        if (isNewWeek) {
-          rotatingChores = chores.rotating
-            .filter((c, i) => {
-              const isBiweekly = c.type === "biweekly";
-              return (!isBiweekly || isBiweeklyWeek()) && i % personList.length === index;
-            })
-            .map(c => ({
-              name: c.task,
-              type: c.type,
-              origin: "rotating"
-            }));
-      
-          savedPerson.chores = [...baseChores, ...rotatingChores];
-          savedPerson.completed = []; // ✅ wipe completions only on new week
-      
-          localStorage.setItem("choreData", JSON.stringify(
-            personList.map(p => {
-              const sp = p.id === person.id ? savedPerson : savedPeople.find(e => e.id === p.id) || {};
-              return {
-                ...p,
-                chores: sp.chores || [],
-                completed: sp.completed || [],
-                dollarsOwed: sp.dollarsOwed ?? p.dollarsOwed ?? 0,
-                paid: sp.paid ?? false
-              };
-            })
-          ));
-        } else {
-          const savedChores = savedPerson.chores || [];
-          rotatingChores = savedChores.filter(c => c.origin === "rotating");
-        }
-      
-        const saved = savedPeople.find(p => p.id === person.id);
+    people = cloudData.people.map(p => ({ ...p }));
+    choreData = data.chores;
 
-        return {
-          ...person,
-          chores: saved?.chores || [...baseChores, ...rotatingChores],
-          completed: saved?.completed || [],
-          dollarsOwed: saved?.dollarsOwed ?? person.dollarsOwed ?? 0,
-          paid: saved?.paid ?? false,
-          points: 0
-        };
-        
-      });
-      
-      localStorage.setItem("choreData", JSON.stringify(people)); // ✅ ADD THIS
-
-      if (isNewWeek) {
-        updateChoreCycleStartDate();
-        try {
-          await window.saveChoreData("myHouseholdId", { people });
-        } catch (err) {
-          console.error("[app.js]: ⚠️ Firebase save failed. Saving locally.", err);
-          localStorage.setItem("choreData", JSON.stringify(people));
-        }
-      }
-
-      renderDashboard();
-
-      // ✅ ✅ ADD THIS — Sandbox Mode Visual + Toggle Sync
-      const banner = document.getElementById("sandboxBanner");
-      const sandboxCheckbox = document.getElementById("sandboxToggle");
-
-      if (isSandboxMode && banner) {
-        banner.classList.remove("hidden");
-      }
-      if (sandboxCheckbox) {
-        sandboxCheckbox.checked = isSandboxMode;
-      }
-    })
-    .catch(err => {
-      console.error("[app.js]: ❌ Failed to load or process data.json", err);
-      showCustomAlert("❌ Failed to load chore data. Please check your file or reload.");
-    });
+    renderDashboard();
+    autoResetChoresIfNeeded();
+  })
+  .catch(err => {
+    console.error("[app.js]: ❌ Failed to load chore data", err);
+    showCustomAlert("❌ Failed to load chores or people from cloud. Please try again.");
+  });
 })();
 
 /* ============================================================================

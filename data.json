@@ -3,26 +3,22 @@
       {
         "id": "lauren",
         "name": "Lauren",
-        "color": "#e26d6d",
-        "dollarsOwed": 2
+        "color": "#e26d6d"
       },
       {
         "id": "silas",
         "name": "Silas",
-        "color": "#4caf50",
-        "dollarsOwed": 1
+        "color": "#4caf50"
       },
       {
         "id": "jkins",
         "name": "Jkins",
-        "color": "#5a9bd8",
-        "dollarsOwed": 0
+        "color": "#5a9bd8"
       },
       {
         "id": "natasha",
         "name": "Natasha",
-        "color": "#a673d1",
-        "dollarsOwed": 3
+        "color": "#a673d1"
       }
     ],
     "chores": {
