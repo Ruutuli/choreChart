@@ -3,12 +3,16 @@
       {
         "id": "lauren",
         "name": "Lauren",
-        "color": "#e26d6d"
+        "color": "#e26d6d",
+        "phone": "2513918899",
+        "carrier": "Google Fi"
       },
       {
         "id": "silas",
         "name": "Silas",
-        "color": "#4caf50"
+        "color": "#4caf50",
+        "phone": "3399332482",
+        "carrier": "Google Fi"
       },
       {
         "id": "jkins",
@@ -79,6 +83,7 @@
           { "task": "Sweep Laundry Room", "type": "weekly" },
           { "task": "Mop Laundry Room", "type": "biweekly" },
           { "task": "Clean Laundry Room", "type": "weekly" },
+          { "task": "Clean Entryway Rugs", "type": "biweekly" },
       
           { "task": "Sweep Kitchen", "type": "weekly" },
           { "task": "Mop Kitchen", "type": "weekly" },

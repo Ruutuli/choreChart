@@ -1,27 +1,127 @@
 /* ============================================================================
-   app.js — Logic for Chore Tracker: Rendering, Points, Admin, Dashboard
+ 00. Main File Skeleton for app.js
 ============================================================================ */
-function isSafariOniOS() {
-  const ua = window.navigator.userAgent;
-  return /iPad|iPhone|iPod/.test(ua) && ua.includes("Safari") && !ua.includes("Chrome");
+
+// ============================================================================
+// ------------------- Reminder & SMS Tools -------------------
+// EmailJS config, SMS/email reminder logic, 8AM daily auto-text
+// ============================================================================
+
+// ------------------- Function: sendChoreEmail -------------------
+// Sends a chore summary email to the person
+function sendChoreEmail(person) {
+  const todayChores = (person.chores || []).filter(c => {
+    const t = c.type?.toLowerCase();
+    return ["daily", "weekly", "biweekly"].includes(t);
+  });
+
+  if (todayChores.length === 0) return;
+
+  const formattedList = todayChores.map(c => `• ${c.name} (${c.type})`).join("\n");
+
+  const freqSet = new Set(todayChores.map(c => c.type?.toLowerCase()));
+  const frequency = freqSet.size === 1
+    ? Array.from(freqSet)[0]?.replace(/^\w/, l => l.toUpperCase())
+    : "Mixed";
+
+  sendChoreSMS(person, formattedList, frequency);
 }
 
-function dismissBanner() {
-  localStorage.setItem("installBannerDismissed", "true");
-  document.getElementById("installBanner")?.classList.add("hidden");
-}
+// ------------------- Function: sendChoreSMS -------------------
+// Sends an SMS (via email gateway) containing chores
+function sendChoreSMS(person, message) {
+  const rawNumber = person.phone ?? "";
+  const rawCarrier = person.carrier ?? "";
+  const number = rawNumber.replace(/\D/g, "");
+  const carrierSuffix = carrierGateways[rawCarrier];
 
-window.addEventListener("load", () => {
-  const shouldShow = isSafariOniOS() && !window.navigator.standalone && !localStorage.getItem("installBannerDismissed");
-  if (shouldShow) {
-    document.getElementById("installBanner")?.classList.remove("hidden");
+  if (!number || !carrierSuffix) {
+    console.warn(`📵 Skipping SMS: missing number or carrier for ${person.name}`);
+    return;
   }
-});
 
-/* ============================================================================
-   00. Data Persistence & Utilities
-============================================================================ */
-// savePeople
+  const to_email = `${number}${carrierSuffix}`;
+  const formattedList = (person.chores || [])
+    .map(c => `• ${c.name} (${c.type})`).join("\n") || "No chores listed";
+
+  const freqSet = new Set((person.chores || []).map(c => c.type?.toLowerCase()));
+  const frequency = freqSet.size === 1
+    ? Array.from(freqSet)[0]?.replace(/^\w/, l => l.toUpperCase())
+    : "Mixed";
+
+  const date_range = getDateRange(frequency);
+
+  emailjs.send("service_v8ndidp", "template_53xar2k", {
+    to_email,
+    name: person.name,
+    chore_list: formattedList,
+    dollars: person.dollarsOwed || 0,
+    frequency,
+    date_range,
+    site_url: "https://ruutuli.github.io/choreChart/"
+  }).then(() => {
+    console.log(`✅ SMS sent to ${person.name}`);
+  }).catch(err => {
+    console.error(`❌ Failed to send SMS to ${person.name}`, err);
+  });
+}
+
+// ------------------- Function: getDateRange -------------------
+// Returns formatted range depending on chore frequency
+function getDateRange(frequency) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (frequency === "Daily") {
+    return formatDate(today);
+  }
+
+  const start = new Date(today);
+  start.setDate(today.getDate() - today.getDay());
+
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+
+  return `${formatDate(start)} – ${formatDate(end)}`;
+}
+
+// ------------------- Function: shouldSendMorningText -------------------
+// Checks if the 8AM SMS was already sent today
+function shouldSendMorningText() {
+  const now = new Date();
+  const hours = now.getHours();
+  const lastSent = localStorage.getItem("lastSMSDate");
+  const todayStr = now.toISOString().split("T")[0];
+
+  return hours === 8 && lastSent !== todayStr;
+}
+
+// ------------------- Function: triggerDailySMS -------------------
+// Triggers SMS to all people at 8AM daily
+function triggerDailySMS() {
+  if (!shouldSendMorningText()) return;
+
+  console.log("📤 Sending 8AM SMS to all people...");
+
+  people.forEach(p => {
+    sendChoreEmail(p);
+  });
+
+  const todayStr = new Date().toISOString().split("T")[0];
+  localStorage.setItem("lastSMSDate", todayStr);
+}
+
+// 🔁 Check every 10 minutes
+setInterval(triggerDailySMS, 10 * 60 * 1000);
+
+
+// ============================================================================
+// ------------------- Data Persistence & Utilities -------------------
+// Handles saving to local storage and syncing to Firebase
+// ============================================================================
+
+// ------------------- Function: savePeople -------------------
+// Saves people array to localStorage
 function savePeople() {
   if (isSandboxMode) {
     console.warn("[Sandbox Mode]: Prevented savePeople");
@@ -35,14 +135,8 @@ function savePeople() {
   }
 }
 
-
-// assignRotatingChores
-function assignRotatingChores() {
-  console.log("Reassigning rotating chores...");
-  // Put your actual chore assignment logic here
-}
-
-// logActivity
+// ------------------- Function: logActivity -------------------
+// Pushes an event to the activity log with timestamp
 function logActivity(entry) {
   if (isSandboxMode) {
     console.warn("[Sandbox Mode]: Prevented logActivity");
@@ -56,40 +150,8 @@ function logActivity(entry) {
   localStorage.setItem("activityLog", JSON.stringify(logs));
 }
 
-// populateAdminDollarSelect
-function populateAdminDollarSelect() {
-  const select1 = document.getElementById("adminDollarSelect");
-  const select2 = document.getElementById("skipPersonSelect");
-
-  [select1, select2].forEach(select => {
-    if (!select) return;
-    select.innerHTML = "";
-    const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
-
-    // Get list of people skipped this week
-    const skippedPeople = logs
-      .filter(log =>
-        log.type === "skipped" &&
-        ["day", "week"].includes(log.duration) &&
-        new Date(log.time) >= new Date(getStartOfWeek())
-      )
-      .map(log => log.person.toLowerCase());
-    
-    people.forEach(p => {
-      const wasSkipped = skippedPeople.includes(p.name.toLowerCase());
-    
-      if (wasSkipped) {
-        console.log(`[reset]: Skipping chore reset for ${p.name} due to skip log`);
-        return;
-      }
-    
-      p.completed = [];
-    });
-    
-  });
-}
-
-// ------------------- Debounced Firebase Save -------------------
+// ------------------- Function: debouncedFirebaseSave -------------------
+// Saves data to Firebase with debounce delay
 let saveTimeout = null;
 function debouncedFirebaseSave(delay = 1000) {
   clearTimeout(saveTimeout);
@@ -98,23 +160,25 @@ function debouncedFirebaseSave(delay = 1000) {
     window.saveChoreData("myHouseholdId", { people })
       .then(() => {
         console.log("[Firebase]: ✅ Data synced");
+        updateLastUpdatedText(); // ✅ ADD HERE
         showCustomAlert("✅ Changes saved");
       })
       .catch(err => {
         console.error("[Firebase]: ❌ Save failed", err);
+        updateLastUpdatedText(); // ✅ ADD HERE
         showCustomAlert("⚠️ Failed to sync with cloud");
       });
   }, delay);
 }
-/* ============================================================================
-   01. Time & Chore Cycle Logic
-============================================================================ */
 
-// Add this line near getStartOfWeek()
-const storedStart = localStorage.getItem("choreStart");
 
-// getStartOfWeek
-// Returns the YYYY-MM-DD string for the most recent Sunday.
+// ============================================================================
+// ------------------- Time & Cycle Logic -------------------
+// Week-based resets, auto-trigger control
+// ============================================================================
+
+// ------------------- Function: getStartOfWeek -------------------
+// Returns ISO string of current week's start (Sunday)
 const getStartOfWeek = () => {
   const now = new Date();
   const dayOfWeek = now.getDay(); // Sunday = 0
@@ -124,8 +188,8 @@ const getStartOfWeek = () => {
   return sunday.toISOString().split("T")[0];
 };
 
-// isBiweeklyWeek
-// Determines whether this is a biweekly reset week.
+// ------------------- Function: isBiweeklyWeek -------------------
+// Returns true if this is a biweekly reset week
 const isBiweeklyWeek = () => {
   const anchorSunday = new Date("2024-01-07T00:00:00"); // first-ever chore week
   const now = new Date();
@@ -133,124 +197,43 @@ const isBiweeklyWeek = () => {
   return diffWeeks % 2 === 0;
 };
 
-// shouldReassignRotatingChores
-// Checks if a new weekly cycle has started since last recorded.
-const shouldReassignRotatingChores = () => {
-  const currentStart = getStartOfWeek();
-  return storedStart !== currentStart;
-};
-
-// reassignRotatingChores
-// Triggers normal reassignment logic used on Sundays
-function reassignRotatingChores() {
-  assignRotatingChores(); // use your existing rotation logic
-  savePeople();
-
-  const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
-  logs.unshift({
-    type: "reassigned",
-    time: new Date().toISOString()
-  });
-  localStorage.setItem("activityLog", JSON.stringify(logs));
-
-  showCustomAlert("✅ Chores reassigned successfully.");
-  renderDashboard(); // optional: refresh immediately
-}
-
-// updateChoreCycleStartDate
-// Sets localStorage to the current week's start date (Sunday).
+// ------------------- Function: updateChoreCycleStartDate -------------------
+// Updates stored chore cycle start for weekly tracking
 const updateChoreCycleStartDate = () => {
   const currentStart = getStartOfWeek();
   localStorage.setItem("choreStart", currentStart);
 };
 
-// autoResetChoresIfNeeded
-// Resets completed chores automatically at Sunday 12:00 AM.
-const autoResetChoresIfNeeded = () => {
-  const now = new Date();
-  const isSundayMidnight =
-    now.getDay() === 0 &&
-    now.getHours() === 0 &&
-    now.getMinutes() === 0;
+// ------------------- Firebase Helper: Ensure Reset Timestamps Exist -------------------
+async function initializeResetTimestamps() {
+  const ref = firebase.database().ref("meta/lastReset");
+  const snapshot = await ref.once("value");
+  const existing = snapshot.val();
 
-  const currentStart = getStartOfWeek();
-
-  if (isSundayMidnight && storedStart !== currentStart) {
-    console.log("[app.js]: ⏰ Auto-resetting chores at Sunday midnight");
-    updateChoreCycleStartDate();
-
-    people.forEach(p => {
-      p.completed = [];
-    });
-
-    savePeople(); // <-- This is the proper global function used elsewhere
-    renderDashboard();    
-  }
-};
-
-// toggleAutoReset
-function toggleAutoReset() {
-  const isDisabled = document.getElementById("disableAutoResetToggle").checked;
-  localStorage.setItem("autoResetDisabled", isDisabled ? "true" : "false");
-}
-
-/* ============================================================================
-   02. Admin Tools & Modals
-============================================================================ */
-// openEditChoresModal
-function openEditChoresModal() {
-  const select = document.getElementById("editChoresPersonSelect");
-  select.innerHTML = "";
-  people.forEach(p => {
-    const opt = document.createElement("option");
-    opt.value = p.name;
-    opt.textContent = p.name;
-    select.appendChild(opt);
-  });
-
-  document.getElementById("editChoresList").value = "";
-  document.getElementById("editChoresModal").classList.remove("hidden");
-}
-
-// closeEditChoresModal
-function closeEditChoresModal() {
-  document.getElementById("editChoresModal").classList.add("hidden");
-}
-
-// saveEditedChores
-function saveEditedChores() {
-  const name = document.getElementById("editChoresPersonSelect").value;
-  const tasks = document.getElementById("editChoresList").value
-    .split("\n")
-    .map(t => t.trim())
-    .filter(Boolean);
-
-  const person = people.find(p => p.name === name);
-  if (person) {
-    person.completed = tasks;
-    savePeople();
-
-    if (typeof window.saveChoreData === "function") {
-      window.saveChoreData("myHouseholdId", { people }).then(() => {
-        showCustomAlert("✅ Completed chores updated.");
-        closeEditChoresModal();
-        renderDashboard();
-      }).catch(err => {
-        console.error("[saveEditedChores]: ❌ Firebase sync failed", err);
-        showCustomAlert("⚠️ Saved locally but not synced.");
-        closeEditChoresModal();
-        renderDashboard();
-      });
-    } else {
-      showCustomAlert("✅ Completed chores updated.");
-      closeEditChoresModal();
-      renderDashboard();
-    }
-
+  if (!existing) {
+    const now = new Date().toISOString();
+    const defaults = {
+      daily: now,
+      weekly: now,
+      biweekly: now,
+      monthly: now,
+      quarterly: now
+    };
+    await ref.set(defaults);
+    console.log("🧱 Initialized meta.lastReset with default timestamps");
+  } else {
+    console.log("📦 meta.lastReset already exists:", existing);
   }
 }
 
-// previewReset
+
+// ============================================================================
+// ------------------- Admin Tools & Modals -------------------
+// Modals for dollar editing, skipping, and chore overrides
+// ============================================================================
+
+// ------------------- Function: previewReset -------------------
+// Displays a visual preview of reset impact
 function previewReset() {
   const preview = people.map(p => {
     return `${p.name}: Would keep ${p.completed.length} tasks, reset owed if unpaid`;
@@ -259,177 +242,8 @@ function previewReset() {
   showCustomAlert("Reset Preview:\n\n" + preview);
 }
 
-// ------------------- Reset Everything -------------------
-function confirmResetAll() {
-  closeModal();
-
-  const rotatingChores = choreData.rotating || [];
-  const totalRotating = rotatingChores.length;
-  const peopleCount = people.length;
-
-  // Distribute rotating chores in round-robin
-  const rotatingAssignments = Array.from({ length: peopleCount }, () => []);
-  for (let i = 0; i < totalRotating; i++) {
-    const personIndex = i % peopleCount;
-    rotatingAssignments[personIndex].push(rotatingChores[i]);
-  }
-
-  // 🔁 Snapshot current state for calendar view
-  logActivity({
-    type: "weeklySnapshot",
-    time: new Date().toISOString(),
-    snapshot: people.map(p => ({
-      name: p.name,
-      completed: [...(p.completed || [])],
-      chores: (p.chores || []).map(c => c.name)
-    }))
-  });
-
-  people.forEach((p, index) => {
-    p.dollarsOwed = 0;
-    p.paid = false;
-    p.completed = [];
-
-    const newChores = [];
-
-    let permanent = [];
-    const match = Object.entries(choreData.permanent || {}).find(([key]) =>
-      key.toLowerCase() === p.name.toLowerCase()
-    );
-    if (match) permanent = match[1];
-
-    for (const chore of permanent) {
-      const taskName = chore.task ?? chore.name ?? "Unnamed Task";
-      newChores.push({
-        name: taskName,
-        task: taskName,
-        type: chore.type ?? "unspecified",
-        origin: "permanent"
-      });
-    }
-
-    for (const chore of rotatingAssignments[index]) {
-      const taskName = chore.task ?? chore.name ?? "Unnamed Task";
-      newChores.push({
-        name: taskName,
-        task: taskName,
-        type: chore.type ?? "unspecified",
-        origin: "rotating"
-      });
-    }
-
-    p.chores = newChores;
-  });
-
-  logActivity({ type: "manualReset", time: new Date().toISOString() });
-
-  if (typeof window.saveChoreData === "function") {
-    window.saveChoreData("myHouseholdId", { people }).then(() => {
-      showSection("admin");
-      showCustomAlert("🗑️ All data reset and reassigned.");
-    }).catch(err => {
-      console.error("[confirmResetAll]: ❌ Firebase sync failed", err);
-      showSection("admin");
-      showCustomAlert("⚠️ Reset saved locally but not synced.");
-    });
-  } else {
-    showSection("admin");
-    showCustomAlert("🗑️ All data reset and reassigned.");
-  }
-}
-
-// ------------------- Manual Reset Chores -------------------
-function manualResetChores() {
-  const rotatingChores = choreData.rotating || [];
-  const totalRotating = rotatingChores.length;
-  const peopleCount = people.length;
-
-  // Distribute rotating chores in round-robin
-  const rotatingAssignments = Array.from({ length: peopleCount }, () => []);
-  for (let i = 0; i < totalRotating; i++) {
-    const personIndex = i % peopleCount;
-    rotatingAssignments[personIndex].push(rotatingChores[i]);
-  }
-
-  // 🔁 Snapshot current state for calendar view
-  logActivity({
-    type: "weeklySnapshot",
-    time: new Date().toISOString(),
-    snapshot: people.map(p => ({
-      name: p.name,
-      completed: [...(p.completed || [])],
-      chores: (p.chores || []).map(c => c.name)
-    }))
-  });
-
-  people.forEach((p, index) => {
-    const missedChores = Array.isArray(p.completed)
-      ? p.chores?.filter(c => !p.completed.includes(c.name)).length || 0
-      : p.chores?.length || 0;
-
-    if (missedChores > 0) {
-      logActivity({
-        type: "missedChores",
-        person: p.name,
-        amount: missedChores,
-        time: new Date().toISOString()
-      });
-    }
-
-    p.dollarsOwed = (p.dollarsOwed || 0) + missedChores;
-    p.paid = false;
-    p.completed = [];
-
-    const newChores = [];
-
-    let permanent = [];
-    const match = Object.entries(choreData.permanent || {}).find(([key]) =>
-      key.toLowerCase() === p.name.toLowerCase()
-    );
-    if (match) permanent = match[1];
-
-    for (const chore of permanent) {
-      const taskName = (chore.task || chore.name || "Unnamed Task");
-      newChores.push({
-        name: taskName,
-        task: taskName,
-        type: chore.type ?? "unspecified",
-        origin: "permanent"
-      });
-    }
-
-    for (const chore of rotatingAssignments[index]) {
-      const taskName = chore.task ?? chore.name ?? "Unnamed Task";
-      newChores.push({
-        name: taskName,
-        task: taskName,
-        type: chore.type ?? "unspecified",
-        origin: "rotating"
-      });
-    }
-
-    p.chores = newChores;
-  });
-
-  logActivity({ type: "manualReset", time: new Date().toISOString() });
-
-  if (typeof window.saveChoreData === "function") {
-    window.saveChoreData("myHouseholdId", { people }).then(() => {
-      showSection("admin");
-      showCustomAlert("🔁 Weekly reset complete. Missed chore amounts updated.");
-    }).catch(err => {
-      console.error("[manualResetChores]: ❌ Firebase sync failed", err);
-      showSection("admin");
-      showCustomAlert("⚠️ Weekly reset saved locally but not synced.");
-    });
-  } else {
-    showSection("admin");
-  }
-}
-
-
-// applyDollarAdjustment
-// Adjusts the dollar amount owed for the selected person
+// ------------------- Function: applyDollarAdjustment -------------------
+// Updates a user's owed amount
 function applyDollarAdjustment() {
   const name = document.getElementById("adminDollarSelect").value;
   const amount = parseFloat(document.getElementById("adminDollarInput").value);
@@ -441,12 +255,14 @@ function applyDollarAdjustment() {
     person.dollarsOwed = amount;
     person.paid = amount === 0;
     savePeople();
+    debouncedFirebaseSave();
+    
     showCustomAlert(`💵 Updated ${name}'s owed amount to $${amount}`);
   }
 }
 
-// applySkipChore
-// Skips a person's chores for a time period with a reason
+// ------------------- Function: applySkipChore -------------------
+// Adds a skip log for a user
 function applySkipChore() {
   const name = document.getElementById("skipPersonSelect").value;
   const duration = document.getElementById("skipDurationSelect").value;
@@ -473,26 +289,28 @@ function applySkipChore() {
   person.skipLog.push(log);
 
   savePeople();
+  debouncedFirebaseSave();
+  
   showCustomAlert(`💤 ${name}'s chores skipped for ${duration} (${reason})`);
 }
 
-// forceReassignChores
-// Hard reset for rotating chores and local data. Triggers full page reload.
+// ------------------- Function: forceReassignChores -------------------
+// Logs reassignment activity (manual trigger)
 const forceReassignChores = () => {
   logActivity({ type: "reassigned", triggeredBy: "admin" });
-
-
-  showCustomAlert("Rotating chores cleared. Reload manually if needed.");
+  showCustomAlert("🔄 Chores reassigned.");
+  
 };
 
+// ============================================================================
+// ------------------- UI Rendering -------------------
+// Builds dashboard, calendar, and history from data
+// ============================================================================
 
-
-/* ============================================================================
-   03. UI Rendering
-============================================================================ */
-// renderDashboard
-// Renders the main dashboard cards for each person.
+// ------------------- Function: renderDashboard -------------------
+// Renders chore dashboard for all users
 const renderDashboard = () => {
+  // ------------------- Hide History / Show Dashboard -------------------
   document.getElementById("history").classList.add("hidden");
   document.getElementById("dashboard").classList.remove("hidden");
 
@@ -500,9 +318,11 @@ const renderDashboard = () => {
   const dashboard = document.getElementById("dashboardContent");
   dashboard.innerHTML = "";
 
-  // Remove any previous week banner
+  // ------------------- Remove Previous Week Banner -------------------
   const existingBanner = dashboardSection.querySelector(".chore__week-banner");
-  if (existingBanner) existingBanner.remove();
+  if (existingBanner) {
+    existingBanner.remove();
+  }
 
   // ------------------- Week Date Setup -------------------
   const today = new Date();
@@ -523,22 +343,21 @@ const renderDashboard = () => {
   const formatDate = (date) =>
     date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 
+  // ------------------- Build and Insert Week Banner -------------------
   const weekBanner = document.createElement("div");
   weekBanner.className = "chore__week-banner";
   weekBanner.innerHTML = `
-  <div class="week-banner__row">
-    <div class="week-banner__column left">Day</div>
-    <div class="week-banner__column center">Week</div>
-    <div class="week-banner__column right">Biweekly</div>
-  </div>
-  <div class="week-banner__row">
-    <div class="week-banner__column left">${formatDate(today)}</div>
-    <div class="week-banner__column center">${formatDate(startOfWeek)} – ${formatDate(endOfWeek)}</div>
-    <div class="week-banner__column right">${formatDate(biweeklyStart)} – ${formatDate(biweeklyEnd)}</div>
-  </div>
-`;
-
-
+    <div class="week-banner__row">
+      <div class="week-banner__column left">Day</div>
+      <div class="week-banner__column center">Week</div>
+      <div class="week-banner__column right">Biweekly</div>
+    </div>
+    <div class="week-banner__row">
+      <div class="week-banner__column left">${formatDate(today)}</div>
+      <div class="week-banner__column center">${formatDate(startOfWeek)} – ${formatDate(endOfWeek)}</div>
+      <div class="week-banner__column right">${formatDate(biweeklyStart)} – ${formatDate(biweeklyEnd)}</div>
+    </div>
+  `;
   dashboardSection.insertBefore(weekBanner, dashboard);
 
   // ------------------- Render Each Person's Card -------------------
@@ -549,35 +368,37 @@ const renderDashboard = () => {
     card.ondragover = onDragOver;
     card.ondrop = (event) => onDrop(event, person.id);
 
-// ------------------- De-dupe Chores -------------------
-const uniqueChores = [];
-const seen = new Set();
+    // ------------------- De-dupe Chores -------------------
+    const uniqueChores = [];
+    const seen = new Set();
 
-for (const chore of person.chores) {
-  const key = `${chore.name}|${chore.type}`;
-  if (!seen.has(key)) {
-    seen.add(key);
-    uniqueChores.push(chore);
-  }
-}
+    for (const chore of person.chores) {
+      const key = `${chore.name}|${chore.type}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniqueChores.push(chore);
+      }
+    }
 
+    // ------------------- Split by Type -------------------
     const permanentChores = uniqueChores
-      .filter(c => c.origin === "permanent")
-      .sort((a, b) => a.type.localeCompare(b.type));
+    .filter(c => c.origin === "permanent")
+    .sort((a, b) => a.type.localeCompare(b.type));
+  
+  const rotatingChores = ["daily", "weekly", "monthly", "biweekly", "quarterly"]
+    .flatMap(type => 
+      uniqueChores.filter(c => c.origin === "rotating" && c.type === type)
+    );
+  
 
-    const rotatingChores = ["daily", "weekly", "monthly", "quarterly"]
-      .flatMap(group =>
-        uniqueChores.filter(c => c.origin === "rotating" && c.type === group)
-      );
-
+    // ------------------- Build Card HTML -------------------
     card.innerHTML = `
       <div class="card__header">
         <h3 class="card__name" style="color: ${person.color};">${person.name}</h3>
         <span class="card__totals">✅ Completed: ${person.completed.length} / ${person.chores.length}</span>
         <span class="card__owed ${person.paid ? 'paid' : ''}">
-        ${person.paid ? '$0 Paid' : `$${person.dollarsOwed} owed`}
-      </span>
-      
+          ${person.paid ? '$0 Paid' : `$${person.dollarsOwed} owed`}
+        </span>
       </div>
       <ul class="card__chores">
         <li class="chore__section-title" style="background-color: ${person.color}">
@@ -591,54 +412,54 @@ for (const chore of person.chores) {
       </ul>
     `;
 
-    dashboard.appendChild(card);
+    // ------------------- Paid Button Setup -------------------
     const paidBtn = document.createElement("button");
     paidBtn.className = person.paid ? "chore-btn chore-btn--paid" : "chore-btn chore-btn--unpaid";
-    paidBtn.textContent = person.paid ? "✔️ Paid" : "Mark Paid";    
+    paidBtn.textContent = person.paid ? "✔️ Paid" : "Mark Paid";
     paidBtn.onclick = () => openPaidModal(person.name);
-// Create a wrapper that holds both chores and button
-const contentWrapper = document.createElement("div");
-contentWrapper.style.display = "flex";
-contentWrapper.style.flexDirection = "column";
-contentWrapper.style.flexGrow = "1";
+    paidBtn.style.marginTop = "2rem";
 
-// Inject the main card content (already HTML string)
-contentWrapper.innerHTML = card.innerHTML;
-card.innerHTML = ""; // clear to avoid duplication
-card.appendChild(contentWrapper);
+    // ------------------- Wrap Card Content -------------------
+    const contentWrapper = document.createElement("div");
+    contentWrapper.style.display = "flex";
+    contentWrapper.style.flexDirection = "column";
+    contentWrapper.style.flexGrow = "1";
+    contentWrapper.innerHTML = card.innerHTML;
 
-// Then append the paid button at the bottom
-paidBtn.style.marginTop = "2rem";  // adds space above the button
+    card.innerHTML = "";
+    card.appendChild(contentWrapper);
+    card.appendChild(paidBtn);
 
-card.appendChild(paidBtn);
-
-
+    // ------------------- Add Card to Dashboard -------------------
+    dashboard.appendChild(card);
   });
 };
 
-// ------------------- Render Chore -------------------
+
+// ------------------- Function: renderChore -------------------
+// Returns HTML for a single chore item
 const renderChore = (person) => (choreObj) => {
-  const { name, type, locked } = choreObj;
-  const isDone = Array.isArray(person.completed) && person.completed.includes(name);
+  const rawName = choreObj.name || choreObj.task || "Unnamed";
+  const { type, locked } = choreObj;
+  const isDone = Array.isArray(person.completed) && person.completed.includes(rawName);
   const isDraggable = !isDone && !locked;
   const originalOwner = choreObj.originalOwner || null;
-  const displayName = originalOwner ? `${name} (${originalOwner})` : name;
+  const displayName = originalOwner ? `${rawName} (${originalOwner})` : rawName;
 
   return `
     <li 
       class="card__chore ${isDone ? 'chore-done' : ''}" 
       draggable="${isDraggable}"
-      ondragstart="${isDraggable ? `onDragStart(event, '${person.id}', '${name}')` : 'event.preventDefault()'}"
+      ondragstart="${isDraggable ? `onDragStart(event, '${person.id}', '${rawName}')` : 'event.preventDefault()'}"
       ${!isDraggable ? 'title="This chore is locked or already completed."' : ''}
     >
-
       <label class="chore-label">
         <input 
           type="checkbox"
           class="chore-checkbox chore--${person.id}" 
           ${isDone || locked ? 'checked' : ''} 
           ${locked ? 'disabled' : ''}
-          onchange="completeChore('${person.name}', '${name}')"
+          onchange="completeChore('${person.name}', '${rawName}')"
         />
         <span>
           <span class="chore-tag chore-tag--${type}">[${type[0]}]</span> 
@@ -649,8 +470,8 @@ const renderChore = (person) => (choreObj) => {
   `;
 };
 
-// renderHistory
-// Displays global stats, insights, event log, and completed chores per person.
+// ------------------- Function: renderHistory -------------------
+// Displays the activity log history
 const renderHistory = () => {
   const container = document.getElementById("historyContent");
   container.innerHTML = "";
@@ -678,10 +499,12 @@ const renderHistory = () => {
 
   // ------------------- Dynamic Stats -------------------
   const totalChoresAssigned = people.reduce((sum, p) => sum + p.chores.length, 0);
+
   const mostCompletedPerson = people.reduce((top, p) => 
     p.completed.length > top.count ? { name: p.name, count: p.completed.length } : top, 
     { name: "", count: 0 }
   );
+
   const mostMissedPerson = people.reduce((worst, p) => {
     const missed = p.chores.length - p.completed.length;
     return missed > worst.missed ? { name: p.name, missed } : worst;
@@ -701,6 +524,7 @@ const renderHistory = () => {
 
   // ------------------- Activity Log (Changelog) -------------------
   const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
+
   const logCard = document.createElement("div");
   logCard.className = "history__card";
   logCard.innerHTML = `
@@ -710,7 +534,7 @@ const renderHistory = () => {
         ? "<li>No activity logged.</li>"
         : logs.slice(0, 10).map(log => {
           const date = new Date(log.time).toLocaleString();
-        
+
           switch (log.type) {
             case "completed":
               return `<li>✅ <strong>${log.person}</strong> completed "<em>${log.task}</em>" — <span class="log-date">${date}</span></li>`;
@@ -732,8 +556,7 @@ const renderHistory = () => {
             default:
               return `<li>📦 ${log.type} — ${JSON.stringify(log)} — <span class="log-date">${date}</span></li>`;
           }
-        }).join("")
-      }
+        }).join("")}
     </ul>
   `;
   container.appendChild(logCard);
@@ -774,24 +597,27 @@ const renderHistory = () => {
   container.appendChild(peopleWrapper);
 };
 
-// renderCalendar
-// Builds the monthly calendar with chore status, resets, and missed indicators.
+// ------------------- Function: renderCalendar -------------------
+// Renders full monthly calendar view with missed icons
 const renderCalendar = () => {
   const container = document.getElementById("calendarContent");
   container.innerHTML = "";
 
+  // ------------------- Date Setup -------------------
   const now = new Date();
   const year = now.getFullYear();
   const month = now.getMonth();
 
   const firstDay = new Date(year, month, 1);
   const lastDay = new Date(year, month + 1, 0);
+
   const startDay = firstDay.getDay();
   const totalDays = lastDay.getDate();
   const totalCells = startDay + totalDays;
   const totalWeeks = Math.ceil(totalCells / 7);
   const totalCellsToRender = totalWeeks * 7;
 
+  // ------------------- Calendar Grid Setup -------------------
   const calendarGrid = document.createElement("div");
   calendarGrid.className = "calendar__grid";
 
@@ -803,6 +629,7 @@ const renderCalendar = () => {
     calendarGrid.appendChild(cell);
   });
 
+  // ------------------- Build Calendar Cells -------------------
   for (let i = 0; i < totalCellsToRender; i++) {
     const cell = document.createElement("div");
 
@@ -814,9 +641,12 @@ const renderCalendar = () => {
       date.setHours(0, 0, 0, 0);
       cell.className = "calendar__cell";
 
+      // ------------------- Weekly & Biweekly Icons -------------------
       if (date.getDay() === 0) {
+        // 🔁 Weekly reset icon
         cell.innerHTML += `<div class="calendar__icon" title="Weekly Reset">🔁</div>`;
 
+        // 🌀 Biweekly check (based on 2025-01-05 anchor Sunday)
         const anchorSunday = new Date("2025-01-05T00:00:00");
         const daysBetween = Math.floor((date - anchorSunday) / (1000 * 60 * 60 * 24));
         const weeksBetween = Math.floor(daysBetween / 7);
@@ -825,38 +655,45 @@ const renderCalendar = () => {
         }
       }
 
+      // ------------------- Missed Chore Detection -------------------
       const isPast = date < now;
       const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
+
       const snapshotForDate = logs.find(
-        log => log.type === "weeklySnapshot" && new Date(log.time).toDateString() === date.toDateString()
+        log => log.type === "weeklySnapshot" &&
+        new Date(log.time).toDateString() === date.toDateString()
       );
-      
+
       let missedChores = false;
       if (snapshotForDate) {
-        missedChores = snapshotForDate.snapshot.some(p => {
-          return p.chores.some(task => !p.completed.includes(task));
-        });
+        missedChores = snapshotForDate.snapshot.some(p =>
+          p.chores.some(task => !p.completed.includes(task))
+        );
       }
-      
 
       if (isPast && missedChores) {
         cell.innerHTML += `<div class="calendar__missed" title="Missed chore(s)">🟥</div>`;
       }
 
+      // ------------------- Final Date Number -------------------
       cell.innerHTML += `<div class="calendar__date">${day}</div>`;
     }
 
     calendarGrid.appendChild(cell);
   }
 
+  // ------------------- Final Append -------------------
   container.appendChild(calendarGrid);
 };
 
-/* ============================================================================
-   04. Chore Completion & Toggling
-============================================================================ */
-// completeChore
-// Toggles whether a chore is completed for a given person.
+
+// ============================================================================
+// ------------------- Chore Completion & Toggling -------------------
+// Completion toggles, paid toggles
+// ============================================================================
+
+// ------------------- Function: completeChore -------------------
+// Marks a chore complete or uncomplete
 const completeChore = (name, choreName) => {
   const person = people.find(p => p.name.toLowerCase() === name.toLowerCase());
 
@@ -885,36 +722,31 @@ const completeChore = (name, choreName) => {
     });
   }
 
-  // Save to Firebase only, then update UI
-  if (typeof window.saveChoreData === "function") {
-    window.saveChoreData("myHouseholdId", { people }).then(() => {
-      if (location.hash === "#admin") {
-        showSection("admin");
-      } else {
-        renderDashboard();
-      }
-      showCustomAlert("🔁 Weekly reset complete. Missed chore amounts updated.");
-    }).catch(err => {
-      console.error("[manualResetChores]: ❌ Firebase sync failed", err);
-      if (location.hash === "#admin") {
-        showSection("admin");
-      } else {
-        renderDashboard();
-      }
-      showCustomAlert("⚠️ Weekly reset saved locally but not synced.");
-    });
-  } else {
+  // ------------------- Firebase Save & UI Update -------------------
+  const updateUI = () => {
     if (location.hash === "#admin") {
       showSection("admin");
     } else {
       renderDashboard();
     }
+  };
+
+  if (typeof window.saveChoreData === "function") {
+    window.saveChoreData("myHouseholdId", { people })
+      .then(() => {
+        updateUI();
+        showCustomAlert(`✅ ${choreName} marked as completed for ${person.name}.`);
+      })
+      .catch(err => {
+        console.error("[completeChore]: ❌ Firebase sync failed", err);
+        updateUI();
+        showCustomAlert("⚠️ Chore marked as complete locally only.");
+      });
   }
-  
 };
 
-// togglePaid
-// Toggles paid state for a person and updates Firebase + UI
+// ------------------- Function: togglePaid -------------------
+// Toggles paid status and updates owed state
 const togglePaid = (name) => {
   const person = people.find(p => p.name === name);
   if (!person) return;
@@ -944,36 +776,42 @@ const togglePaid = (name) => {
   }
 };
 
+// ============================================================================
+// ------------------- Sidebar & Modal Controls -------------------
+// All UI buttons and modal visibility control
+// ============================================================================
 
-/* ============================================================================
-   05. Sidebar & Modal Control
-============================================================================ */
-//populateAdminDropdowns
+// ------------------- Function: populateAdminDropdowns -------------------
+// Populates person selectors in admin modals
 function populateAdminDropdowns() {
   const personOptions = people.map(p => `<option value="${p.name}">${p.name}</option>`).join("");
 
   const dollarSelect = document.getElementById("adminDollarSelect");
   const skipPersonSelect = document.getElementById("skipPersonSelect");
-  const editChoresSelect = document.getElementById("editChoresPersonSelect");
+  const smsSelect = document.getElementById("smsPersonSelect");
+  const reminderSelect = document.getElementById("reminderPersonSelect");
 
   if (dollarSelect) dollarSelect.innerHTML = personOptions;
   if (skipPersonSelect) skipPersonSelect.innerHTML = personOptions;
-  if (editChoresSelect) editChoresSelect.innerHTML = personOptions;
+
+  if (smsSelect) smsSelect.innerHTML = personOptions;
+  if (reminderSelect) reminderSelect.innerHTML = personOptions;
 }
 
-// toggleSidebar
-// Toggles sidebar visibility.
+// ------------------- Function: toggleSidebar -------------------
+// Toggles sidebar visibility
 const toggleSidebar = () => {
   document.getElementById("sidebar").classList.toggle("open");
 };
 
-// closeModal
+// ------------------- Function: closeModal -------------------
+// Closes all open modals
 const closeModal = () => {
   document.querySelectorAll(".modal").forEach(m => m.classList.remove("show"));
 };
 
-// showSection
-// Shows one section and hides the others (dashboard, history, calendar).
+// ------------------- Function: showSection -------------------
+// Shows one section and hides others (dashboard, history, calendar, admin)
 const showSection = (idToShow) => {
   const sections = ["dashboard", "history", "calendar", "admin"];
 
@@ -998,56 +836,59 @@ const showSection = (idToShow) => {
   if (idToShow === "dashboard") renderDashboard();
   if (idToShow === "history") renderHistory();
   if (idToShow === "calendar") renderCalendar();
-  if (idToShow === "admin") populateAdminDropdowns(); // ✅ updated full function
+  if (idToShow === "admin") populateAdminDropdowns();
 
-  // ✅ Close sidebar if open
+  // Auto-close sidebar and modals
   document.getElementById("sidebar")?.classList.remove("open");
-  
-  // ✅ Close any open modal (like Mark Paid or Reassign)
-  document.querySelectorAll(".modal.show").forEach(modal => modal.classList.remove("show"));  
+  document.querySelectorAll(".modal.show").forEach(modal => modal.classList.remove("show"));
 };
 
-// viewHistory
-// Shows the history panel and closes sidebar.
+// ------------------- Function: viewHistory -------------------
+// Shows the history panel and closes sidebar
 const viewHistory = () => {
   showSection("history");
   toggleSidebar();
 };
 
-// viewCalendar
-// Shows the calendar view and closes sidebar.
+// ------------------- Function: viewCalendar -------------------
+// Shows the calendar view and closes sidebar
 const viewCalendar = () => {
   toggleSidebar();
   showSection("calendar");
 };
 
-// openReassignModal
-// Opens the reassignment confirmation dialog.
+// ------------------- Function: openReassignModal -------------------
+// Opens the reassignment confirmation dialog
 const openReassignModal = () => {
   toggleSidebar();
   document.getElementById("reassignModal").classList.add("show");
 };
 
-// openManualResetModal
+// ------------------- Function: openManualResetModal -------------------
+// Opens modal to confirm manual reset
 const openManualResetModal = () => {
   document.getElementById("manualResetModal").classList.add("show");
 };
 
-// confirmManualReset
+// ------------------- Function: confirmManualReset -------------------
+// Executes manual reset and closes modal
 const confirmManualReset = () => {
   manualResetChores();
   closeModal();
 };
 
-// openSkipChoreModal 
+// ------------------- Function: openSkipChoreModal -------------------
+// Opens the chore skip modal
 const openSkipChoreModal = () => {
   document.getElementById("skipChoreModal").classList.add("show");
 };
 
-// openWeeklySummaryModal
+// ------------------- Function: openWeeklySummaryModal -------------------
+// Displays chore stats for the current week
 const openWeeklySummaryModal = () => {
   const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
   const start = new Date(getStartOfWeek());
+
   const thisWeekLogs = logs.filter(log => new Date(log.time) >= start);
 
   const completedMap = {};
@@ -1085,8 +926,8 @@ const openWeeklySummaryModal = () => {
   document.getElementById("weeklySummaryModal").classList.add("show");
 };
 
-
-// toggleSandboxMode
+// ------------------- Function: toggleSandboxMode -------------------
+// Toggles mock data mode for safe testing
 const toggleSandboxMode = () => {
   const isEnabled = document.getElementById("sandboxToggle").checked;
   localStorage.setItem("sandboxMode", isEnabled ? "true" : "false");
@@ -1099,31 +940,34 @@ const toggleSandboxMode = () => {
   showCustomAlert(`Sandbox Mode ${isEnabled ? "Enabled" : "Disabled"}`);
 };
 
-
-
-
-// openResetAllModal 
+// ------------------- Function: openResetAllModal -------------------
+// Opens modal to confirm full reset
 const openResetAllModal = () => {
   document.getElementById("resetModal").classList.add("show");
 };
 
-// confirmSkipChore 
+// ------------------- Function: confirmSkipChore -------------------
+// Applies chore skip with selected period
 const confirmSkipChore = () => {
   applySkipChore();
   closeModal();
 };
 
-//openDollarAdjustModal
+// ------------------- Function: openDollarAdjustModal -------------------
+// Opens the owed amount adjustment modal
 const openDollarAdjustModal = () => {
   document.getElementById("dollarAdjustModal").classList.add("show");
 };
 
+// ------------------- Function: confirmDollarAdjustment -------------------
+// Applies new dollar amount to selected user
 const confirmDollarAdjustment = () => {
   applyDollarAdjustment();
   closeModal();
 };
 
-// openPreviewResetModal
+// ------------------- Function: openPreviewResetModal -------------------
+// Displays preview of weekly reset effect
 const openPreviewResetModal = () => {
   const skippedNames = getSkippedPeopleThisWeek();
   const preview = people.map(p => {
@@ -1135,6 +979,8 @@ const openPreviewResetModal = () => {
   document.getElementById("previewResetModal").classList.add("show");
 };
 
+// ------------------- Function: getSkippedPeopleThisWeek -------------------
+// Returns array of people who opted out of this week
 const getSkippedPeopleThisWeek = () => {
   const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
 
@@ -1147,19 +993,16 @@ const getSkippedPeopleThisWeek = () => {
     .map(log => log.person.toLowerCase());
 };
 
-// confirmReassign
-// Confirms chore reassignment and triggers a full reload.
+// ------------------- Function: confirmReassign -------------------
+// Confirms and runs chore reassignment
 const confirmReassign = () => {
   logActivity({ type: "reassigned", triggeredBy: "admin" });
-
-
   closeModal();
-
   showCustomAlert("Rotating chores cleared. Reload manually if needed.");
 };
 
-
-// setupSwipeSidebar
+// ------------------- Function: setupSwipeSidebar -------------------
+// Enables swipe gesture sidebar on mobile
 const setupSwipeSidebar = () => {
   let startX = 0;
 
@@ -1180,8 +1023,8 @@ const setupSwipeSidebar = () => {
 
 setupSwipeSidebar();
 
-// openPaidModal
-// Opens the "Mark Paid" confirmation modal for a selected person.
+// ------------------- Function: openPaidModal -------------------
+// Opens the paid confirmation modal
 let pendingPaidName = null;
 
 const openPaidModal = (name) => {
@@ -1197,8 +1040,8 @@ const openPaidModal = (name) => {
   });
 };
 
-// confirmMarkPaid 
-// Confirms the paid toggle and closes the modal.
+// ------------------- Function: confirmMarkPaid -------------------
+// Marks person as paid
 const confirmMarkPaid = () => {
   if (pendingPaidName) {
     togglePaid(pendingPaidName);
@@ -1207,22 +1050,9 @@ const confirmMarkPaid = () => {
   closeModal();
 };
 
-// Close Sidebar When Clicking Outside 
-document.addEventListener("click", (e) => {
-  const sidebar = document.getElementById("sidebar");
-  const toggleBtn = document.querySelector(".header__menu");
-
-  const sidebarIsOpen = sidebar?.classList.contains("open");
-  const clickedInsideSidebar = sidebar?.contains(e.target);
-  const clickedToggleButton = toggleBtn?.contains(e.target);
-
-  if (sidebarIsOpen && !clickedInsideSidebar && !clickedToggleButton) {
-    sidebar.classList.remove("open");
-  }
-});
-
-//showCustomAlert
-function showCustomAlert(message, duration = 2500) {
+// ------------------- Function: showCustomAlert -------------------
+// Displays a toast alert with a message
+function showCustomAlert(message, duration = 4500) {
   const alertBox = document.getElementById("customAlert");
   const alertText = document.getElementById("customAlertText");
 
@@ -1240,70 +1070,87 @@ function showCustomAlert(message, duration = 2500) {
   }, duration);
 }
 
+// ============================================================================
+// ------------------- UI Event Listeners -------------------
+// Handles interactions like closing sidebar when clicking outside
+// ============================================================================
 
-/* ============================================================================
-   06. Drag-and-Drop Logic
-============================================================================ */
+// ------------------- Function: Close Sidebar on Outside Click -------------------
+// Auto-closes sidebar if user clicks outside of it and the toggle button
+document.addEventListener("click", (e) => {
+  const sidebar = document.getElementById("sidebar");
+  const toggleBtn = document.querySelector(".header__menu");
+
+  const sidebarIsOpen = sidebar?.classList.contains("open");
+  const clickedInsideSidebar = sidebar?.contains(e.target);
+  const clickedToggleButton = toggleBtn?.contains(e.target);
+
+  if (sidebarIsOpen && !clickedInsideSidebar && !clickedToggleButton) {
+    sidebar.classList.remove("open");
+  }
+});
+
+// ============================================================================
+// ------------------- Drag-and-Drop Logic -------------------
+// Allows drag-to-move chore reassignment
+// ============================================================================
 let draggedChoreInfo = null;
 
-// onDragStart
-// Stores drag source data and sets drag transfer payload.
+// ------------------- Function: onDragStart -------------------
+// Begins drag of a chore
 const onDragStart = (event, fromId, taskName) => {
   draggedChoreInfo = { fromId, taskName };
   event.dataTransfer.setData("text/plain", taskName);
 };
 
-// onDragOver
-// Required to allow drop target to accept dragged items.
+// ------------------- Function: onDragOver -------------------
+// Enables drop-over behavior
 const onDragOver = (event) => {
   event.preventDefault();
 };
 
-// onDrop
-// Transfers a chore to another person’s view (with original ownership).
+// ------------------- Function: onDrop -------------------
+// Applies chore move between people
+// ------------------- Function: onDrop -------------------
+// Handles drag-and-drop transfer of a chore from one person to another
 const onDrop = (event, toId) => {
   event.preventDefault();
 
   if (!draggedChoreInfo) {
-    console.warn("[app.js]: ⚠️ Drag event dropped with no chore info.");
     draggedChoreInfo = null; // ensure clean state
     return;
   }
-  
+
   const { fromId, taskName } = draggedChoreInfo;
 
+  // ------------------- Ignore Same Source/Target -------------------
   if (fromId === toId) {
     console.log("[app.js]: 🟡 Drag ignored — source and target are the same.");
     return;
   }
 
+  // ------------------- Validate Helper Target -------------------
   const helper = people.find(p => p.id === toId);
   if (!helper) {
     console.error(`[app.js]: ❌ Helper person not found: ${toId}`);
     return;
   }
 
-  const alreadyDone = helper.completed.includes(taskName);
-  if (alreadyDone) {
-    console.log(`[app.js]: ✅ ${taskName} already completed by ${helper.name}`);
+  // ------------------- Skip if Already Completed -------------------
+  if (helper.completed.includes(taskName)) {
     return;
   }
 
   helper.completed.push(taskName);
 
-  // ------------------- Inject Helped Chore into View -------------------
+  // ------------------- Locate Original Owner & Chore -------------------
   const originalOwner = people.find(p => p.id === fromId);
-  if (!originalOwner) {
-    console.error(`[app.js]: ❌ Original owner not found: ${fromId}`);
-    return;
-  }
+  if (!originalOwner) return;
 
   const originalChore = originalOwner.chores.find(c => c.name === taskName);
-  if (!originalChore) {
-    console.error(`[app.js]: ❌ Chore not found in original owner: ${taskName}`);
-    return;
-  }
+  if (!originalChore) return;
 
+  // ------------------- Inject into Helper (if not already injected) -------------------
   const alreadyInjected = helper.chores.some(
     c => c.name === taskName && c.helper
   );
@@ -1315,60 +1162,73 @@ const onDrop = (event, toId) => {
       originalOwner: originalOwner.name,
       locked: true
     });
-  
-    // 🆕 Remove chore from original owner's list
+
+    // Remove from original owner
     originalOwner.chores = originalOwner.chores.filter(c => c.name !== taskName);
-  
-    // 🆕 ✅ Add to activity log
+
+    // Log the transfer
     logActivity({
       type: "transferred",
       from: originalOwner.name,
       to: helper.name,
       task: taskName
     });
-  
-    console.log(`[app.js]: 🛠️ ${helper.name} helped with ${taskName} from ${originalOwner.name}`);
   }
-  
 
+  // ------------------- Dollar Update, Save, and UI Refresh -------------------
   helper.dollarsOwed = Math.max((helper.dollarsOwed || 0) - 1, 0);
 
-  savePeople(); // <-- This is the proper global function used elsewhere
-  renderDashboard();  
+  savePeople();
+  debouncedFirebaseSave();
+
+  renderDashboard();
   draggedChoreInfo = null;
 };
 
-/* ============================================================================
-   07. Init & Data Loading
-   Initializes global `people` array and triggers data loading and setup.
-============================================================================ */
+// ============================================================================
+// ------------------- Init & Data Loading -------------------
+// Loads people and chore data from Firebase and data.json, processes full state
+// ============================================================================
 
-// ------------------- Global Variables -------------------
+// ------------------- Init Vars -------------------
 let people = [];
 let savedPeople = [];
-let choreData = {}; // ✅ <--- ADD THIS LINE
+let choreData = {};
 
 // ------------------- Sandbox Mode -------------------
 const isSandboxMode = localStorage.getItem("sandboxMode") === "true";
 
-document.addEventListener("DOMContentLoaded", () => {
+// ------------------- DOM Ready Bootstrapping -------------------
+document.addEventListener("DOMContentLoaded", async () => {
   const banner = document.getElementById("sandboxBanner");
   const checkbox = document.getElementById("sandboxToggle");
 
-  if (isSandboxMode && banner) banner.classList.remove("hidden");
-  if (checkbox) checkbox.checked = isSandboxMode;
+  if (isSandboxMode && banner) {
+    banner.classList.remove("hidden");
+  }
+
+  if (checkbox) {
+    checkbox.checked = isSandboxMode;
+  }
+
+  populateAdminDropdowns();
+
+  // 🕒 Set initial last updated timestamp
+  updateLastUpdatedText();
+  updateLastUpdatedText(); // ✅ NEW: Show on load
+
+  // 🔁 Auto-reset logic (Firebase-based)
+  await initializeResetTimestamps();        // ✅ Ensure meta.lastReset structure exists
+  await autoResetIfNeeded();                // ✅ Perform needed resets on load
+  setInterval(autoResetIfNeeded, 60 * 1000); // 🕓 Re-check every minute
 });
 
 
-// Periodically check for reset conditions (e.g., Sunday midnight)
-setInterval(autoResetChoresIfNeeded, 60000); // Check every 60 seconds
-
 // ------------------- Function: Init Async Loader -------------------
-// Loads people and chore data from Firebase (or fallback to localStorage),
-// then processes and initializes them for current week state.
+// Loads cloud data, merges with static data, processes startup logic
 (async () => {
   try {
-    // Attempt to load from cloud sync (Firebase)
+    // Load people data from Firebase
     const cloudData = await window.loadChoreData("myHouseholdId");
     savedPeople = (cloudData && cloudData.people) || [];
   } catch (err) {
@@ -1377,84 +1237,534 @@ setInterval(autoResetChoresIfNeeded, 60000); // Check every 60 seconds
     return;
   }
 
-  // Fetch data.json from project (permanent + rotating chore templates)
-  fetch("data.json")
-  .then(res => {
+  try {
+    const res = await fetch("data.json");
     if (!res.ok) throw new Error("Invalid response from data.json");
-    return res.json();
-  })
-  .then(async (data) => {
+
+    const data = await res.json();
+
     const cloudData = await window.loadChoreData("myHouseholdId");
     if (!cloudData || !Array.isArray(cloudData.people)) {
       throw new Error("❌ Firebase returned no people data.");
     }
 
-    people = cloudData.people.map(p => ({ ...p }));
+    const staticPeople = data.people || [];
+    const cloudPeople = cloudData.people || [];
+
+    // Merge people from static (phone/carrier) with cloud (progress/state)
+    people = staticPeople.map(staticPerson => {
+      const cloudMatch = cloudPeople.find(p => p.id === staticPerson.id);
+      return {
+        ...staticPerson,
+        ...cloudMatch
+      };
+    });
+
     choreData = data.chores;
 
     renderDashboard();
     autoResetChoresIfNeeded();
-  })
-  .catch(err => {
+
+    // ------------------- Midnight Reset Poll -------------------
+    setInterval(autoResetChoresIfNeeded, 60000); // Check every 60s
+
+  } catch (err) {
     console.error("[app.js]: ❌ Failed to load chore data", err);
     showCustomAlert("❌ Failed to load chores or people from cloud. Please try again.");
-  });
+  }
 })();
 
-/* ============================================================================
-   08. Global Exports (window bindings)
-============================================================================ */
 
-// ------------------- Core Completion & Toggling -------------------
-window.completeChore = completeChore;
-window.togglePaid = togglePaid;
+// ============================================================================
+// ------------------- Schedule -------------------
+// Determines if a chore should be reset
+// ============================================================================
 
-// ------------------- Sidebar & Modal Controls -------------------
-window.toggleSidebar = toggleSidebar;
-window.closeModal = closeModal;
-window.showSection = showSection;
-window.viewHistory = viewHistory;
-window.viewCalendar = viewCalendar;
+// ------------------- Function: shouldReset -------------------
+// Checks if a given chore type needs resetting
+function shouldReset(frequency, lastResetDate = null) {
+  const today = new Date();
+  const now = today.toDateString();
 
-// ------------------- Chore Reassignment -------------------
-window.forceReassignChores = forceReassignChores;
-window.openReassignModal = openReassignModal;
-window.confirmReassign = confirmReassign;
-window.reassignRotatingChores = reassignRotatingChores;
+  switch (frequency) {
+    case "daily":
+      return !lastResetDate || new Date(lastResetDate).toDateString() !== now;
 
-// ------------------- Admin Controls -------------------
-window.applyDollarAdjustment = applyDollarAdjustment;
-window.toggleAutoReset = toggleAutoReset;
-window.openEditChoresModal = openEditChoresModal;
-window.closeEditChoresModal = closeEditChoresModal;
-window.saveEditedChores = saveEditedChores;
-window.previewReset = previewReset;
-window.confirmResetAll = confirmResetAll;
-window.applySkipChore = applySkipChore;
-window.logActivity = logActivity;
-window.openManualResetModal = openManualResetModal;
-window.confirmManualReset = confirmManualReset;
-window.openSkipChoreModal = openSkipChoreModal;
-window.confirmSkipChore = confirmSkipChore;
-window.openDollarAdjustModal = openDollarAdjustModal;
-window.confirmDollarAdjustment = confirmDollarAdjustment;
-window.openPreviewResetModal = openPreviewResetModal;
-window.openResetAllModal = openResetAllModal;
-window.openWeeklySummaryModal = openWeeklySummaryModal;
-window.toggleSandboxMode = toggleSandboxMode;
-window.confirmMarkPaid = confirmMarkPaid;
+    case "weekly":
+      return today.getDay() === 0 && (!lastResetDate || new Date(lastResetDate).toDateString() !== now);
 
-window.onDragStart = onDragStart;
-window.onDragOver = onDragOver;
-window.onDrop = onDrop;
+    case "biweekly":
+      const weekNumber = Math.floor((Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) -
+        Date.UTC(today.getFullYear(), 0, 1)) / (7 * 24 * 60 * 60 * 1000)) + 1;
+      return today.getDay() === 0 && weekNumber % 2 === 0 &&
+        (!lastResetDate || new Date(lastResetDate).toDateString() !== now);
 
-// ------------------- Service Worker Registration -------------------
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker
-      .register("./sw.js")
-      .then(() => console.log("[PWA] Service Worker registered ✅"))
-      .catch(err => console.error("[PWA] Service Worker failed", err));
-  });
+    case "monthly":
+      return today.getDate() === 1 && (!lastResetDate || new Date(lastResetDate).toDateString() !== now);
+
+    case "quarterly":
+      return today.getDate() === 1 &&
+        [0, 3, 6, 9].includes(today.getMonth()) &&
+        (!lastResetDate || new Date(lastResetDate).toDateString() !== now);
+
+    default:
+      return false;
+  }
 }
 
+// ------------------- Auto Weekly Reset (Firebase Synced) -------------------
+async function autoResetIfNeeded() {
+  const metaRef = firebase.database().ref("meta/lastReset");
+  const snapshot = await metaRef.once("value");
+  const lastResetStr = snapshot.val();
+  const now = new Date();
+  const isSunday = now.getDay() === 0;
+
+  let shouldReset = false;
+
+  if (!lastResetStr) {
+    console.log("⚠️ No lastReset timestamp found. Performing first reset.");
+    shouldReset = true;
+  } else {
+    const lastReset = lastResetStr; // already an object with .daily, .weekly, etc
+    const daysSinceReset = (now - lastReset) / (1000 * 60 * 60 * 24);
+    shouldReset = isSunday && daysSinceReset >= 7;
+  }
+
+  if (shouldReset) {
+    console.log("⏰ Auto-reset triggered (Firebase synced)");
+
+    reassignRotatingChores();
+    assignAllChores();
+    people.forEach(p => {
+      p.completed = [];
+      p.dollarsOwed = 0;
+      p.paid = true;
+    });
+
+    savePeople();
+    debouncedFirebaseSave();
+
+    const updatedTimestamps = {
+      daily: now.toISOString(),
+      weekly: now.toISOString(),
+      biweekly: now.toISOString(),
+      monthly: now.toISOString(),
+      quarterly: now.toISOString()
+    };
+    await metaRef.set(updatedTimestamps);
+    
+    showCustomAlert("🔁 Auto-reset: Chores and progress reset for the week.");
+  } else {
+    console.log("📅 No auto-reset needed today.");
+  }
+}
+
+
+// ============================================================================
+// ------------------- Master Chore Logic -------------------
+// Consolidated chore reset/assignment logic
+// ============================================================================
+
+// ------------------- Function: assignAllChores -------------------
+// Handles all chore assignment & rotation
+function assignAllChores() {
+  const permanentList = Object.entries(choreData.permanent || {}).flatMap(([personId, chores]) =>
+    chores.map(c => ({
+      task: c.task,
+      name: c.task,
+      type: c.type,
+      people: [personId]
+    }))
+  );
+
+  const rotatingList = Array.isArray(choreData.rotating) ? choreData.rotating : [];
+
+  people.forEach(person => {
+    const id = person.id;
+
+    const permanent = permanentList.filter(c =>
+      Array.isArray(c.people) && c.people.includes(id)
+    );
+
+    const rotating = rotatingList.filter(c =>
+      Array.isArray(c.people) && c.people.includes(id)
+    );
+
+    const allChores = [
+      ...permanent.map(c => ({
+        task: c.task,
+        name: c.task,
+        type: c.type,
+        origin: "permanent"
+      })),
+      ...rotating.map(c => ({
+        task: c.task,
+        name: c.task,
+        type: c.type,
+        origin: "rotating"
+      }))
+    ];
+
+    person.chores = allChores;
+  });
+
+  savePeople();
+  debouncedFirebaseSave();
+  updateLastUpdatedText(); // ✅ ADD HERE
+}
+
+// ------------------- Function: manualResetChores -------------------
+// Wrapper: Resets with missed chore tracking and adds missed chore penalty
+function manualResetChores() {
+  const snapshot = people.map(p => ({
+    id: p.id,
+    name: p.name,
+    chores: Array.isArray(p.chores) ? p.chores.map(c => c.name) : [],
+    completed: [...(p.completed || [])],
+    dollarsOwed: p.dollarsOwed || 0
+  }));
+
+  const missed = [];
+
+  snapshot.forEach(p => {
+    const missedTasks = p.chores.filter(task => !p.completed.includes(task));
+    if (missedTasks.length > 0) {
+      missed.push({
+        id: p.id,
+        person: p.name,
+        amount: missedTasks.length
+      });
+    }
+  });
+
+  missed.forEach(entry => {
+    const person = people.find(p => p.id === entry.id);
+    if (!person) return;
+
+    person.dollarsOwed = (person.dollarsOwed || 0) + entry.amount;
+    person.paid = false;
+
+    logActivity({
+      type: "missedChores",
+      person: entry.person,
+      amount: entry.amount
+    });
+  });
+
+  const now = new Date();
+  logActivity({
+    type: "manualReset",
+    time: now.toISOString()
+  });
+
+  reassignRotatingChores(); // ✅ CRITICAL: repopulates .people for rotating chores
+  assignAllChores();
+
+  people.forEach(p => p.completed = []);
+
+  savePeople();
+  debouncedFirebaseSave();
+  showSection("admin");
+  closeModal();
+  updateLastUpdatedText(); // ✅ ADD HERE
+  showCustomAlert("🔁 Manual reset complete. Rotating chores reassigned and missed chores tallied.");
+}
+
+// ------------------- Function: confirmResetAll -------------------
+// Wrapper: Wipes all and resets without missed logging
+function confirmResetAll() {
+  reassignRotatingChores(); // ✅ Regenerate rotating assignments
+  assignAllChores(); // ✅ Then assign all
+
+  people.forEach(p => {
+    p.completed = [];
+    p.dollarsOwed = 0;
+    p.paid = true; // or false, depending on your preference
+  });
+
+  savePeople();
+  debouncedFirebaseSave();
+  showSection("admin");
+  closeModal();
+  updateLastUpdatedText(); // ✅ ADD HERE
+  showCustomAlert("🧹 All chores, payments, and completions reset.");
+}
+
+// ------------------- Function: reassignRotatingChores -------------------
+// Wrapper: Weekly auto reset with snapshot + optional dollar adjustment
+function reassignRotatingChores() {
+  console.log("🔁 Running reassignRotatingChores...");
+
+  const snapshot = people.map(p => ({
+    name: p.name,
+    chores: p.chores.map(c => c.name),
+    completed: [...(p.completed || [])]
+  }));
+
+  console.log("📸 Weekly snapshot:", snapshot);
+
+  const missed = [];
+
+  snapshot.forEach(p => {
+    const missedTasks = p.chores.filter(c => !p.completed.includes(c));
+    if (missedTasks.length > 0) {
+      missed.push({
+        person: p.name,
+        amount: missedTasks.length
+      });
+    }
+  });
+
+  missed.forEach(entry => {
+    console.log(`⚠️ ${entry.person} missed ${entry.amount} chores`);
+    logActivity({
+      type: "missedChores",
+      person: entry.person,
+      amount: entry.amount
+    });
+  });
+
+  const now = new Date();
+  logActivity({
+    type: "weeklySnapshot",
+    time: now.toISOString(),
+    snapshot
+  });
+
+  // ------------------- Regenerate Rotating Chores -------------------
+  if (Array.isArray(choreData.rotating)) {
+    const peopleIds = people.map(p => p.id);
+    const totalPeople = peopleIds.length;
+  
+    const grouped = {
+      daily: [],
+      weekly: [],
+      biweekly: [],
+      monthly: [],
+      quarterly: [] // Ignored here unless you add support later
+    };
+  
+    // 🧮 Group chores by type
+    for (const chore of choreData.rotating) {
+      if (grouped[chore.type]) grouped[chore.type].push(chore);
+    }
+  
+    // 🔄 Shuffle each group
+    for (const type in grouped) {
+      grouped[type] = grouped[type].sort(() => Math.random() - 0.5);
+    }
+  
+    const newRotating = [];
+    const assigned = Object.fromEntries(peopleIds.map(id => [id, []]));
+  
+    // ✅ Helper to assign chores
+    function assignChores(type, limitPerPerson, required = true) {
+      let pool = [...grouped[type]];
+      for (const personId of peopleIds) {
+        const current = assigned[personId].filter(c => c.type === type).length;
+        const needed = required ? limitPerPerson : Math.min(limitPerPerson, pool.length > 0 ? 1 : 0);
+        for (let i = 0; i < needed && pool.length > 0; i++) {
+          const chore = pool.shift();
+          if (chore) {
+            assigned[personId].push({ ...chore, people: [personId] });
+          }
+        }
+      }
+    }
+  
+    // ✅ Step 1: 1 Daily each
+    assignChores("daily", 1, true);
+  
+    // ✅ Step 2: 1 Biweekly each
+    assignChores("biweekly", 1, true);
+  
+    // ✅ Step 3: 1 Weekly min for each
+    assignChores("weekly", 1, true);
+  
+ // ✅ Step 4: Try to assign 1 Monthly only if still under 4
+ for (const personId of peopleIds) {
+  if (assigned[personId].length < 4 && grouped.monthly.length > 0) {
+    const chore = grouped.monthly.shift();
+    if (chore) assigned[personId].push({ ...chore, people: [personId] });
+  }
+}
+
+// ✅ Step 5: Add 1 extra weekly max if still under 4
+for (const personId of peopleIds) {
+  if (assigned[personId].length < 4 && grouped.weekly.length > 0) {
+    const chore = grouped.weekly.shift();
+    if (chore) assigned[personId].push({ ...chore, people: [personId] });
+  }
+}
+  
+    // ✅ Final Filler: If still under 4, randomly assign any leftovers
+    let fallbackPool = [
+      ...grouped.daily,
+      ...grouped.weekly,
+      ...grouped.biweekly,
+      ...grouped.monthly
+    ].sort(() => Math.random() - 0.5);
+  
+    for (const personId of peopleIds) {
+      while (assigned[personId].length < 4 && fallbackPool.length > 0) {
+        const chore = fallbackPool.shift();
+        assigned[personId].push({ ...chore, people: [personId] });
+      }
+    }
+  
+    // ✅ Apply to choreData.rotating
+    choreData.rotating = peopleIds.flatMap(id => assigned[id]);
+  
+    // 🔍 Confirm everyone has 4
+    const counts = Object.fromEntries(peopleIds.map(id => [id, assigned[id].length]));
+    console.log("🎯 Final chore counts (should be 4 each):");
+    console.table(counts);
+  }
+
+console.log("🎲 Reassigning rotating chores...");
+assignAllChores();
+console.log("✅ assignAllChores() complete");
+
+people.forEach(p => {
+  p.completed = [];
+  console.log(`🧹 Cleared completed chores for ${p.name}`);
+});
+
+
+  savePeople();
+  debouncedFirebaseSave();
+  renderDashboard();
+  updateLastUpdatedText(); // ✅ ADD HERE
+  showCustomAlert("🔁 Rotating chores reassigned. Missed chore data recorded.");
+}
+
+// ------------------- Function: assignRotatingChores -------------------
+// Deprecated wrapper for compatibility
+function assignRotatingChores() {
+  assignAllChores();
+}
+
+// ------------------- Function: autoResetChoresIfNeeded -------------------
+// Poll loop: Checks if a chore type is due for reset
+function autoResetChoresIfNeeded(forDate = new Date()) {
+  const lastReset = JSON.parse(localStorage.getItem("lastChoreReset") || "{}");
+  const resetSummary = [];
+  let didReset = false;
+
+  people.forEach(person => {
+    if (!Array.isArray(person.completed)) {
+      console.log(`⚠️ Skipping ${person.name} — no completed array.`);
+      return;
+    }
+
+    const originalCount = person.completed.length;
+
+    const newCompleted = person.completed.filter(task => {
+      const allChores = [...(person.chores || []), ...(choreData.rotating || [])];
+      const matched = allChores.find(c => c.name === task || c.task === task);
+      const type = matched?.type?.toLowerCase();
+
+      if (!matched || !type) return true;
+
+      return !shouldReset(type, lastReset[type]);
+    });
+
+    const removedCount = originalCount - newCompleted.length;
+
+    if (removedCount > 0) {
+      person.completed = newCompleted;
+      didReset = true;
+      resetSummary.push(`🔁 ${person.name}: ${removedCount} chore(s) reset`);
+    }
+  });
+
+  if (didReset) {
+    const todayStr = forDate.toDateString();
+    ["daily", "weekly", "biweekly", "monthly", "quarterly"].forEach(type => {
+      if (shouldReset(type, lastReset[type])) {
+        lastReset[type] = todayStr;
+        console.log(`📌 Updating reset timestamp for "${type}" to ${todayStr}`);
+      }
+    });
+
+    savePeople();
+    debouncedFirebaseSave();
+  }
+
+  return resetSummary;
+}
+
+// ------------------- Function: toggleAutoReset -------------------
+// Toggles localStorage flag to disable auto reset logic
+function toggleAutoReset() {
+  const isDisabled = document.getElementById("disableAutoResetToggle").checked;
+  localStorage.setItem("autoResetDisabled", isDisabled ? "true" : "false");
+}
+
+// ============================================================================
+// ------------------- Window Bindings -------------------
+// Expose selected functions to global scope for inline HTML access
+// ============================================================================
+
+window.applyDollarAdjustment     = applyDollarAdjustment;
+window.applySkipChore            = applySkipChore;
+window.autoResetChoresIfNeeded   = autoResetChoresIfNeeded;
+window.closeModal                = closeModal;
+window.completeChore             = completeChore;
+window.confirmDollarAdjustment   = confirmDollarAdjustment;
+window.confirmManualReset        = confirmManualReset;
+window.confirmMarkPaid           = confirmMarkPaid;
+window.confirmReassign           = confirmReassign;
+window.confirmResetAll           = confirmResetAll;
+window.confirmSkipChore          = confirmSkipChore;
+window.forceReassignChores       = reassignRotatingChores; // alias
+window.logActivity               = logActivity;
+window.onDragOver                = onDragOver;
+window.onDragStart               = onDragStart;
+window.onDrop                    = onDrop;
+window.openDollarAdjustModal     = openDollarAdjustModal;
+window.openManualResetModal      = openManualResetModal;
+window.openPreviewResetModal     = openPreviewResetModal;
+window.openReassignModal         = openReassignModal;
+window.openResetAllModal         = openResetAllModal;
+window.openSkipChoreModal        = openSkipChoreModal;
+window.openWeeklySummaryModal    = openWeeklySummaryModal;
+window.previewReset              = openPreviewResetModal; // alias
+window.reassignRotatingChores    = reassignRotatingChores;
+window.sendChoreEmail            = sendChoreEmail;
+window.showSection               = showSection;
+window.toggleAutoReset           = toggleAutoReset;
+window.togglePaid                = togglePaid;
+window.toggleSandboxMode         = toggleSandboxMode;
+window.toggleSidebar             = toggleSidebar;
+window.viewCalendar              = viewCalendar;
+window.viewHistory               = viewHistory;
+
+// ------------------- Function: refreshChorePage -------------------
+window.refreshChorePage = function () {
+  const icon = document.querySelector('.refresh-icon');
+  if (icon) {
+    icon.classList.add('spin');
+    setTimeout(() => icon.classList.remove('spin'), 600);
+  }
+
+  renderDashboard();
+  updateLastUpdatedText();
+  showCustomAlert("🔄 Page refreshed.");
+};
+
+function updateLastUpdatedText() {
+  const el = document.getElementById("lastUpdatedText");
+  if (!el) return;
+
+  const now = new Date();
+  const formatted = now.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+
+  el.textContent = `Last updated: ${formatted}`;
+}
