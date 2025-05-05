@@ -1,88 +1,101 @@
-<!-- ============================================================================= -->
-<!-- index.html — Family Chore Tracker (Single Stylesheet Version)                -->
-<!-- ============================================================================= -->
+<!-- ======================================================================== -->
+<!-- index.html — Family Chore Tracker (Semantic Structure + Accessibility) -->
+<!-- ======================================================================== -->
 
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <!-- PWA Manifest + Meta -->
-<link rel="manifest" href="manifest.json" />
-<meta name="theme-color" content="#34d399" />
-<link rel="apple-touch-icon" href="icons/icon-192.png" />
-<meta name="mobile-web-app-capable" content="yes">
-<link rel="manifest" href="manifest.json">
-<!-- Firebase SDKs via CDN -->
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
-  import {
-    getFirestore,
-    doc,
-    getDoc,
-    setDoc
-  } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
-
-  // Your Firebase config
-  const firebaseConfig = {
-    apiKey: "AIzaSyCk9B5LZw6G5fig_7rwCTxnOCwC0UMmWOo",
-    authDomain: "choretracker-d05ba.firebaseapp.com",
-    projectId: "choretracker-d05ba",
-    storageBucket: "choretracker-d05ba.firebasestorage.app",
-    messagingSenderId: "262712306884",
-    appId: "1:262712306884:web:bb79dfb5fbc5ce32de6d91"
-  };
-
-  // Initialize Firebase & Firestore, expose globally
-  const app = initializeApp(firebaseConfig);
-  window.db = getFirestore(app);
-
-  // Global helpers
-  window.saveChoreData = async (householdId, data) => {
-    await setDoc(doc(window.db, "households", householdId), data);
-  };
-
-  window.loadChoreData = async (householdId) => {
-    const docRef = doc(window.db, "households", householdId);
-    const snapshot = await getDoc(docRef);
-    return snapshot.exists() ? snapshot.data() : null;
-  };
-</script>
+    <!-- ====================================================================== -->
+    <!-- Head: Meta, Manifest, Styles, Firebase Setup                          -->
+    <!-- ====================================================================== -->
 
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#34d399" />
+    <meta name="mobile-web-app-capable" content="yes" />
+
     <title>Family Chore Tracker</title>
-    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap" rel="stylesheet" />
+
+    <link rel="manifest" href="manifest.json" />
+    <link rel="apple-touch-icon" href="icons/icon-192.png" />
     <link rel="stylesheet" href="style.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap" rel="stylesheet" />
     <script src="https://kit.fontawesome.com/262000d25d.js" crossorigin="anonymous"></script>
+
+    <!-- Firebase SDK & Global Helpers -->
+    <script type="module">
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-app.js";
+      import {
+        getFirestore,
+        doc,
+        getDoc,
+        setDoc
+      } from "https://www.gstatic.com/firebasejs/10.11.0/firebase-firestore.js";
+
+      const firebaseConfig = {
+        apiKey: "AIzaSyCk9B5LZw6G5fig_7rwCTxnOCwC0UMmWOo",
+        authDomain: "choretracker-d05ba.firebaseapp.com",
+        projectId: "choretracker-d05ba",
+        storageBucket: "choretracker-d05ba.appspot.com",
+        messagingSenderId: "262712306884",
+        appId: "1:262712306884:web:bb79dfb5fbc5ce32de6d91"
+      };
+
+      const app = initializeApp(firebaseConfig);
+      window.db = getFirestore(app);
+
+      window.saveChoreData = async (householdId, data) => {
+        await setDoc(doc(window.db, "households", householdId), data);
+      };
+
+      window.loadChoreData = async (householdId) => {
+        const docRef = doc(window.db, "households", householdId);
+        const snapshot = await getDoc(docRef);
+        return snapshot.exists() ? snapshot.data() : null;
+      };
+    </script>
   </head>
+
   <body>
-    <!-- Sidebar Panel -->
-    <aside class="sidebar" id="sidebar">
-      <div class="sidebar__header">
-        <h2><i class="fas fa-sliders-h"></i> Dashboard</h2>
-        <button class="sidebar__close" onclick="toggleSidebar()">
-          <i class="fas fa-times"></i>
-        </button>
-      </div>
-      <button class="sidebar__action" onclick="resetChores()" title="Reset chore progress for everyone">
-        <i class="fas fa-rotate-left"></i> Reset
-      </button>
-      
-      <button class="sidebar__action" onclick="viewHistory()" title="View past completed chores">
-        <i class="fas fa-clock-rotate-left"></i> History
-      </button>
-      
+    <div id="sandboxBanner" class="sandbox-banner hidden">
+      🧪 Sandbox Mode Active — No changes will be saved
+    </div>
+    
+<!-- ====================================================================== -->
+<!-- Sidebar: Navigation & Admin Actions                                   -->
+<!-- ====================================================================== -->
+<aside id="sidebar" class="sidebar">
+  <div class="sidebar__header">
+    <h2><i class="fas fa-sliders-h"></i> Dashboard</h2>
+    <button class="sidebar__close" onclick="toggleSidebar()">
+      <i class="fas fa-times"></i>
+    </button>
+  </div>
 
-      <button class="sidebar__action" onclick="manualOverride()" title="Manually adjust chores or points">
-        <i class="fas fa-wrench"></i> Manual Override
-      </button>    
-      
-      <button class="sidebar__action" onclick="viewCalendar()" title="See when chores reset or rotate">
-        <i class="fas fa-calendar-alt"></i> Calendar View
-      </button>
-      
-    </aside>
+  <nav class="sidebar__nav">
+    <button class="sidebar__action" onclick="showSection('dashboard')" title="Return to dashboard">
+      <i class="fas fa-home"></i> Dashboard
+    </button>
 
-    <!-- Header -->
+    <button class="sidebar__action" onclick="showSection('history')" title="View stats and history">
+      <i class="fas fa-chart-bar"></i> Stats
+    </button>    
+
+    <button class="sidebar__action" onclick="viewCalendar()" title="See when chores reset or rotate">
+      <i class="fas fa-calendar-alt"></i> Calendar View
+    </button>
+
+    <button class="sidebar__action" onclick="showSection('admin')" title="Admin Tools">
+      <i class="fas fa-tools"></i> Admin
+    </button>
+
+  </nav>
+</aside>
+
+
+    <!-- ====================================================================== -->
+    <!-- Header: App Title & Menu Toggle                                       -->
+    <!-- ====================================================================== -->
     <header class="header">
       <button class="header__menu" onclick="toggleSidebar()">
         <i class="fas fa-bars"></i>
@@ -92,63 +105,266 @@
       </h1>
     </header>
 
-    <!-- Main Dashboard Area -->
+    <!-- ====================================================================== -->
+    <!-- Main Content Container                                                -->
+    <!-- ====================================================================== -->
     <main>
+      <!-- ==================================================================== -->
+      <!-- 01. Dashboard Section — Default View                                -->
+      <!-- ==================================================================== -->
       <section id="dashboard">
         <div id="dashboardContent" class="dashboard">
           <!-- Chore cards will be rendered here by JS -->
         </div>
       </section>
-      
-<!-- ============================================================================ -->
-<!-- 02. History Section — Completed Chores Per Person                            -->
-<!-- ============================================================================ -->
-<section id="history" class="hidden">
-  <button class="back-btn" onclick="showSection('dashboard')">
-    ← Back to Dashboard
-  </button>
 
-  <h2 class="section-title"><i class="fas fa-clock-rotate-left"></i> Chore History</h2>
-  <div id="historyContent" class="history__container"></div>
-</section>
+      <!-- ==================================================================== -->
+      <!-- 02. History Section — Completed Chores Per Person                   -->
+      <!-- ==================================================================== -->
+      <section id="history" class="hidden">
+        <h2 class="section-title"><i class="fas fa-clock-rotate-left"></i> Stats & History</h2>
+        <div class="back-btn-wrapper">
+          <button class="back-btn" onclick="showSection('dashboard')">
+            <i class="fas fa-home"></i> Dashboard
+          </button>
+        </div>
+        <div id="historyContent" class="history__container"></div>
+      </section>
 
-<!-- ============================================================================ -->
-<!-- 03. Calendar Section — Visualize Chore Weeks                                -->
-<!-- ============================================================================ -->
-<section id="calendar" class="calendar-section hidden">
-  <button class="back-btn" onclick="showSection('dashboard')">← Back to Dashboard</button>
-  <h2 class="section-title"><i class="fas fa-calendar-alt"></i> Calendar View</h2>
-  
-  <div class="calendar__container">
-    <div id="calendarContent"></div> <!-- JS will insert .calendar__grid -->
+      <!-- ==================================================================== -->
+      <!-- 03. Calendar Section — Visualize Chore Weeks                        -->
+      <!-- ==================================================================== -->
+      <section id="calendar" class="calendar-section hidden">
+        <h2 class="section-title"><i class="fas fa-calendar-alt"></i> Calendar View</h2>
+        <div class="back-btn-wrapper">
+          <button class="back-btn" onclick="showSection('dashboard')">
+            <i class="fas fa-home"></i> Dashboard
+          </button>
+        </div>
+        <div class="calendar__container">
+          <div id="calendarContent"></div> <!-- JS will insert .calendar__grid -->
+        </div>
+      </section>
+
+<!-- ==================================================================== -->
+<!-- 04. Admin Section — Manual Overrides, Resets, Edits                -->
+<!-- ==================================================================== -->
+<section id="admin" class="hidden">
+  <h2 class="section-title"><i class="fas fa-tools"></i> Admin Tools</h2>
+  <div class="back-btn-wrapper">
+    <button class="back-btn" onclick="showSection('dashboard')">
+      <i class="fas fa-home"></i> Dashboard
+    </button>
+  </div>
+
+  <div class="admin__container">
+
+    <!-- Manual Dollar Adjustment -->
+    <div class="admin__card">
+      <h3>💵 Adjust Dollars Owed</h3>
+      <select id="adminDollarSelect"></select>
+      <input type="number" id="adminDollarInput" placeholder="New amount" />
+      <button onclick="openDollarAdjustModal()">Apply</button>
+    </div>
+
+    <!-- Reassign Mid-Week -->
+    <div class="admin__card">
+      <h3>🔄 Reassign Chores Mid-Week</h3>
+      <button onclick="openReassignModal()">Reassign Now</button>
+    </div>
+
+<!-- Toggle Auto Reset -->
+<div class="admin__card">
+  <h3>🚫 Disable Auto-Reset</h3>
+  <label class="checkbox-label">
+    <input type="checkbox" id="disableAutoResetToggle" onchange="toggleAutoReset()" />
+    Disable automatic chore reset
+  </label>
+</div>
+
+
+    <!-- Edit Completed Chores -->
+    <div class="admin__card">
+      <h3>✏️ Edit Completed Chores</h3>
+      <button onclick="openEditChoresModal()">Edit...</button>
+    </div>
+
+    <!-- Preview Reset -->
+    <div class="admin__card">
+      <h3>👁 Preview Reset Results</h3>
+      <button onclick="openPreviewResetModal()">Preview</button>
+    </div>
+
+    <!-- Manual Chore Reset -->
+    <div class="admin__card">
+      <h3>🧹 Manually Reset Chores</h3>
+      <p>This clears completed chores for everyone except skipped users.</p>
+      <button onclick="openManualResetModal()">Reset Now</button>
+    </div>
+
+    <!-- Reset All Data -->
+    <div class="admin__card">
+      <h3>🧨 Reset All Data</h3>
+      <button class="danger-btn" onclick="openResetAllModal()">Reset Everything</button>
+    </div>
+
+    <!-- Skip Chore -->
+    <div class="admin__card">
+      <h3>🚫 Skip Chore</h3>
+      <select id="skipPersonSelect"></select>
+      <select id="skipDurationSelect">
+        <option value="day">Today</option>
+        <option value="week">This Week</option>
+        <option value="month">This Month</option>
+      </select>
+      <select id="skipReasonSelect">
+        <option value="Sick">😷 Sick</option>
+        <option value="Vacation">🏖 Vacation</option>
+        <option value="Family Emergency">🚨 Family Emergency</option>
+        <option value="Other">📝 Other</option>
+      </select>
+      <button onclick="openSkipChoreModal()">Skip Chore</button>
+    </div>
+
+    <!-- Weekly Summary -->
+<div class="admin__card">
+  <h3>📊 Weekly Summary View</h3>
+  <button onclick="openWeeklySummaryModal()">View Summary</button>
+</div>
+
+<!-- Sandbox Mode -->
+<div class="admin__card">
+  <h3>🧪 Sandbox Mode</h3>
+  <label class="checkbox-label">
+    <input type="checkbox" id="sandboxToggle" onchange="toggleSandboxMode()" />
+    Enable Sandbox/Test Mode
+  </label>
+</div>
+
+
   </div>
 </section>
 
 
 
+    <!-- ====================================================================== -->
+    <!-- Modals: Reset + Reassignment Confirmations                            -->
+    <!-- ====================================================================== -->
 
-
-    </main>
-
-    <!-- Reset Confirmation Modal -->
-<div class="modal" id="resetModal">
-    <div class="modal__content">
-      <h3><i class="fas fa-exclamation-triangle"></i> Confirm Reset</h3>
-      <p>This will reset all chores and charge $1 for each missed task. Are you sure?</p>
-      <div class="modal__actions">
-        <button onclick="confirmReset()">Yes, Reset</button>
-        <button onclick="closeModal()">Cancel</button>
+    <div id="reassignModal" class="modal" role="dialog" aria-labelledby="reassignTitle" aria-modal="true">
+      <div class="modal__content">
+        <h3 id="reassignTitle"><i class="fas fa-random"></i> Confirm Reassignment</h3>
+        <p>This will clear current rotating assignments and generate a new set. Continue?</p>
+        <div class="modal__actions">
+          <button onclick="confirmReassign()">Yes, Reassign</button>
+          <button onclick="closeModal()">Cancel</button>
+        </div>
       </div>
     </div>
+
+
+<div id="paidModal" class="modal" role="dialog" aria-labelledby="paidTitle" aria-modal="true">
+  <div class="modal__content">
+    <h3 id="paidTitle"><i class="fas fa-check-circle"></i> Confirm Payment</h3>
+    <p>Are you sure you want to mark this person as paid?</p>
+    <div class="modal__actions">
+      <button onclick="confirmMarkPaid()">Yes, Mark Paid</button>
+      <button onclick="closeModal()">Cancel</button>
+    </div>
   </div>
-  
+</div>
 
-    <!-- Footer -->
+<div id="editChoresModal" class="modal hidden">
+  <div class="modal__content">
+    <h3>Edit Completed Chores</h3>
+    <select id="editChoresPersonSelect"></select>
+    <textarea id="editChoresList" rows="6" placeholder="Enter chores, one per line"></textarea>
+    <button onclick="saveEditedChores()">Save</button>
+    <button onclick="closeEditChoresModal()">Cancel</button>
+  </div>
+</div>
+
+<div id="manualResetModal" class="modal" role="dialog" aria-labelledby="manualResetTitle" aria-modal="true">
+  <div class="modal__content">
+    <h3 id="manualResetTitle"><i class="fas fa-broom"></i> Confirm Manual Reset</h3>
+    <p>This will clear completed chores for everyone except skipped users. Continue?</p>
+    <div class="modal__actions">
+      <button onclick="confirmManualReset()">Yes, Reset</button>
+      <button onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="skipChoreModal" class="modal" role="dialog" aria-labelledby="skipChoreTitle" aria-modal="true">
+  <div class="modal__content">
+    <h3 id="skipChoreTitle"><i class="fas fa-user-slash"></i> Confirm Skip</h3>
+    <p>Skip selected person’s chores for the selected time and reason?</p>
+    <div class="modal__actions">
+      <button onclick="confirmSkipChore()">Yes, Skip</button>
+      <button onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="dollarAdjustModal" class="modal" role="dialog" aria-labelledby="dollarAdjustTitle" aria-modal="true">
+  <div class="modal__content">
+    <h3 id="dollarAdjustTitle"><i class="fas fa-dollar-sign"></i> Confirm Adjustment</h3>
+    <p>Apply this new dollar amount to the selected person?</p>
+    <div class="modal__actions">
+      <button onclick="confirmDollarAdjustment()">Yes, Apply</button>
+      <button onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="previewResetModal" class="modal" role="dialog" aria-labelledby="previewResetTitle" aria-modal="true">
+  <div class="modal__content">
+    <h3 id="previewResetTitle"><i class="fas fa-eye"></i> Preview Reset Results</h3>
+    <div id="previewResetContent" class="preview-reset-list">
+      <!-- Populated by JS -->
+    </div>
+    <div class="modal__actions">
+      <button onclick="closeModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+
+<div id="resetModal" class="modal" role="dialog" aria-labelledby="resetTitle" aria-modal="true">
+  <div class="modal__content">
+    <h3 id="resetTitle"><i class="fas fa-exclamation-triangle"></i> Confirm Reset</h3>
+    <p>This will erase all chores, completions, and money owed. This action cannot be undone. Are you sure?</p>
+    <div class="modal__actions">
+      <button onclick="confirmResetAll()">Yes, Reset</button> <!-- ✅ fixed -->
+      <button onclick="closeModal()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div id="weeklySummaryModal" class="modal">
+  <div class="modal__content">
+    <h2>📊 Weekly Summary</h2>
+    <div id="weeklySummaryContent">Loading summary...</div>
+    <div class="modal__footer">
+      <button onclick="closeModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="customAlert" class="custom-alert hidden">
+  <span id="customAlertText"></span>
+</div>
+
+    <!-- ====================================================================== -->
+    <!-- Footer                                                                -->
+    <!-- ====================================================================== -->
     <footer class="footer">
-
+      <!-- Reserved for future legal or copyright info -->
     </footer>
 
+    <!-- ====================================================================== -->
+    <!-- Scripts                                                               -->
+    <!-- ====================================================================== -->
     <script type="module" src="app.js"></script>
-
   </body>
 </html>

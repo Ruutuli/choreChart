@@ -1,89 +1,75 @@
-/* ============================================================================ */
-/* app.js — Logic for Chore Tracker: Rendering, Points, Dashboard Controls      */
-/* ============================================================================ */
+/* ============================================================================
+   app.js — Logic for Chore Tracker: Rendering, Points, Admin, Dashboard
+============================================================================ */
 
-// ============================================================================
-// ------------------- Section: Data Load -------------------
-// Loads initial data from Firebase (or local fallback) and merges with data.json.
-// ============================================================================
+/* ============================================================================
+   00. Data Persistence & Utilities
+============================================================================ */
+// savePeople
+function savePeople() {
+  if (isSandboxMode) {
+    console.warn("[Sandbox Mode]: Prevented savePeople");
+    return;
+  }
+  localStorage.setItem("people", JSON.stringify(people));
+}
+
+// assignRotatingChores
+function assignRotatingChores() {
+  console.log("Reassigning rotating chores...");
+  // Put your actual chore assignment logic here
+}
+
+// logActivity
+function logActivity(entry) {
+  if (isSandboxMode) {
+    console.warn("[Sandbox Mode]: Prevented logActivity");
+    return;
+  }
+
+  const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
+  logs.unshift({ ...entry, time: new Date().toISOString() });
+  localStorage.setItem("activityLog", JSON.stringify(logs));
+}
 
 
-fetch("data.json")
-  .then(res => {
-    if (!res.ok) {
-      throw new Error("Invalid response from data.json");
-    }
-    return res.json();
-  })
-  .then(async (data) => {
-    if (!data || !Array.isArray(data.people) || typeof data.chores !== "object") {
-      console.error("[app.js]: ❌ Invalid data.json structure", data);
-      return;
-    }
+// populateAdminDollarSelect
+function populateAdminDollarSelect() {
+  const select1 = document.getElementById("adminDollarSelect");
+  const select2 = document.getElementById("skipPersonSelect");
 
-    const { people: personList, chores } = data;
-    const isNewWeek = shouldReassignRotatingChores();
+  [select1, select2].forEach(select => {
+    if (!select) return;
+    select.innerHTML = "";
+    const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
 
-    people = personList.map((person, index) => {
-      const baseChores = (chores.permanent?.[person.id] || []).map(c => ({
-        name: c.task,
-        type: c.type,
-        origin: "permanent"
-      }));
-
-      const savedPerson = savedPeople.find(p => p.id === person.id) || {};
-      let rotatingChores = [];
-
-      // ------------------- Rotating Chore Assignment -------------------
-      if (isNewWeek) {
-        rotatingChores = chores.rotating
-          .filter((c, i) => {
-            const isBiweekly = c.type === "biweekly";
-            return (!isBiweekly || isBiweeklyWeek()) && i % personList.length === index;
-          })
-          .map(c => ({
-            name: c.task,
-            type: c.type,
-            origin: "rotating"
-          }));
-      } else {
-        const savedChores = savedPerson.chores || [];
-        rotatingChores = savedChores.filter(c => c.origin === "rotating");
+    // Get list of people skipped this week
+    const skippedPeople = logs
+      .filter(log =>
+        log.type === "skipped" &&
+        ["day", "week"].includes(log.duration) &&
+        new Date(log.time) >= new Date(getStartOfWeek())
+      )
+      .map(log => log.person.toLowerCase());
+    
+    people.forEach(p => {
+      const wasSkipped = skippedPeople.includes(p.name.toLowerCase());
+    
+      if (wasSkipped) {
+        console.log(`[reset]: Skipping chore reset for ${p.name} due to skip log`);
+        return;
       }
-
-      return {
-        ...person,
-        chores: [...baseChores, ...rotatingChores],
-        completed: isNewWeek ? [] : (savedPerson.completed || []),
-        dollarsOwed: savedPerson.dollarsOwed ?? person.dollarsOwed ?? 0,
-        points: 0
-      };
+    
+      p.completed = [];
     });
-
-    if (isNewWeek) {
-      updateChoreCycleStartDate();
-      try {
-        await window.saveChoreData("myHouseholdId", { people });
-        console.log("[app.js]: ✅ Cloud chore data saved for new week.");
-      } catch (err) {
-        console.error("[app.js]: ⚠️ Firebase save failed. Saving to localStorage instead.", err);
-        localStorage.setItem("choreData", JSON.stringify(people));
-      }
-    }
-
-    renderDashboard();
-  })
-  .catch(err => {
-    console.error("[app.js]: ❌ Failed to load or process data.json", err);
-    alert("❌ Failed to load chore data. Please check your file or reload.");
+    
   });
+}
 
-  // ============================================================================
-// ------------------- Section: Date Utilities -------------------
-// Handles all time-based logic: weekly cycles, biweekly checks, and resets.
-// ============================================================================
-
-// ------------------- Function: getStartOfWeek -------------------
+/* ============================================================================
+   01. Time & Chore Cycle Logic
+============================================================================ */
+// getStartOfWeek
 // Returns the YYYY-MM-DD string for the most recent Sunday.
 const getStartOfWeek = () => {
   const now = new Date();
@@ -94,7 +80,7 @@ const getStartOfWeek = () => {
   return sunday.toISOString().split("T")[0];
 };
 
-// ------------------- Function: isBiweeklyWeek -------------------
+// isBiweeklyWeek
 // Determines whether this is a biweekly reset week.
 const isBiweeklyWeek = () => {
   const anchorSunday = new Date("2024-01-07T00:00:00"); // first-ever chore week
@@ -103,7 +89,7 @@ const isBiweeklyWeek = () => {
   return diffWeeks % 2 === 0;
 };
 
-// ------------------- Function: shouldReassignRotatingChores -------------------
+// shouldReassignRotatingChores
 // Checks if a new weekly cycle has started since last recorded.
 const shouldReassignRotatingChores = () => {
   const storedStart = localStorage.getItem("choreCycleStartDate");
@@ -111,14 +97,31 @@ const shouldReassignRotatingChores = () => {
   return storedStart !== currentStart;
 };
 
-// ------------------- Function: updateChoreCycleStartDate -------------------
+// reassignRotatingChores
+// Triggers normal reassignment logic used on Sundays
+function reassignRotatingChores() {
+  assignRotatingChores(); // use your existing rotation logic
+  savePeople();
+
+  const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
+  logs.unshift({
+    type: "reassigned",
+    time: new Date().toISOString()
+  });
+  localStorage.setItem("activityLog", JSON.stringify(logs));
+
+  showCustomAlert("✅ Chores reassigned successfully.");
+  renderDashboard(); // optional: refresh immediately
+}
+
+// updateChoreCycleStartDate
 // Sets localStorage to the current week's start date (Sunday).
 const updateChoreCycleStartDate = () => {
   const currentStart = getStartOfWeek();
   localStorage.setItem("choreCycleStartDate", currentStart);
 };
 
-// ------------------- Function: autoResetChoresIfNeeded -------------------
+// autoResetChoresIfNeeded
 // Resets completed chores automatically at Sunday 12:00 AM.
 const autoResetChoresIfNeeded = () => {
   const now = new Date();
@@ -142,13 +145,181 @@ const autoResetChoresIfNeeded = () => {
     renderDashboard();
   }
 };
- 
-// ============================================================================
-// ------------------- Section: UI Rendering -------------------
-// Renders dashboard, chore cards, history panel, and calendar view.
-// ============================================================================
 
-// ------------------- Function: renderDashboard -------------------
+// toggleAutoReset
+function toggleAutoReset() {
+  const isDisabled = document.getElementById("disableAutoResetToggle").checked;
+  localStorage.setItem("autoResetDisabled", isDisabled ? "true" : "false");
+}
+
+/* ============================================================================
+   02. Admin Tools & Modals
+============================================================================ */
+// openEditChoresModal
+function openEditChoresModal() {
+  const select = document.getElementById("editChoresPersonSelect");
+  select.innerHTML = "";
+  people.forEach(p => {
+    const opt = document.createElement("option");
+    opt.value = p.name;
+    opt.textContent = p.name;
+    select.appendChild(opt);
+  });
+
+  document.getElementById("editChoresList").value = "";
+  document.getElementById("editChoresModal").classList.remove("hidden");
+}
+
+// closeEditChoresModal
+function closeEditChoresModal() {
+  document.getElementById("editChoresModal").classList.add("hidden");
+}
+
+// saveEditedChores
+function saveEditedChores() {
+  const name = document.getElementById("editChoresPersonSelect").value;
+  const tasks = document.getElementById("editChoresList").value
+    .split("\n")
+    .map(t => t.trim())
+    .filter(Boolean);
+
+  const person = people.find(p => p.name === name);
+  if (person) {
+    person.completed = tasks;
+    savePeople();
+    showCustomAlert("✅ Completed chores updated.");
+    closeEditChoresModal();
+  }
+}
+
+// previewReset
+function previewReset() {
+  const preview = people.map(p => {
+    return `${p.name}: Would keep ${p.completed.length} tasks, reset owed if unpaid`;
+  }).join("\n");
+
+  showCustomAlert("Reset Preview:\n\n" + preview);
+}
+
+// confirmResetAll
+function confirmResetAll() {
+  closeModal(); // ✅ This hides the modal
+
+  people.forEach(p => {
+    p.chores = [];
+    p.completed = [];
+    p.dollarsOwed = 0;
+    p.paid = false;
+  });
+
+  localStorage.removeItem("activityLog");
+  localStorage.removeItem("autoResetDisabled");
+  savePeople();
+
+  showCustomAlert("🗑️ All data reset.");
+  renderDashboard();
+}
+
+// manualResetChores
+function manualResetChores() {
+  const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
+
+  const skippedPeople = logs
+    .filter(log =>
+      log.type === "skipped" &&
+      ["day", "week"].includes(log.duration) &&
+      new Date(log.time) >= new Date(getStartOfWeek())
+    )
+    .map(log => log.person.toLowerCase());
+
+  people.forEach(p => {
+    if (skippedPeople.includes(p.name.toLowerCase())) {
+      console.log(`[manual reset]: Skipped ${p.name} due to active skip`);
+      return;
+    }
+
+    p.completed = [];
+  });
+
+  logActivity({
+    type: "manualReset",
+    time: new Date().toISOString()
+  });
+
+  savePeople();
+  showCustomAlert("🔁 Chores manually reset.");
+
+  // Only re-render dashboard if currently visible
+  const currentSection = document.querySelector("main > section:not(.hidden)");
+  if (currentSection?.id === "dashboard") {
+    renderDashboard();
+  }
+}
+
+// applyDollarAdjustment
+// Adjusts the dollar amount owed for the selected person
+function applyDollarAdjustment() {
+  const name = document.getElementById("adminDollarSelect").value;
+  const amount = parseFloat(document.getElementById("adminDollarInput").value);
+
+  if (!name || isNaN(amount)) return showCustomAlert("⚠️ Select a person and enter a valid amount.");
+
+  const person = people.find(p => p.name === name);
+  if (person) {
+    person.dollarsOwed = amount;
+    person.paid = amount === 0;
+    savePeople();
+    showCustomAlert(`💵 Updated ${name}'s owed amount to $${amount}`);
+  }
+}
+
+// applySkipChore
+// Skips a person's chores for a time period with a reason
+function applySkipChore() {
+  const name = document.getElementById("skipPersonSelect").value;
+  const duration = document.getElementById("skipDurationSelect").value;
+  const reason = document.getElementById("skipReasonSelect").value;
+
+  const person = people.find(p => p.name === name);
+  if (!person) return showCustomAlert("⚠️ No person selected.");
+
+  // Log the skip event (optional)
+  const log = {
+    type: "skipped",
+    person: name,
+    duration,
+    reason,
+    time: new Date().toISOString()
+  };
+
+  const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
+  logs.unshift(log);
+  localStorage.setItem("activityLog", JSON.stringify(logs));
+
+  // Store skip record (optional future use)
+  if (!person.skipLog) person.skipLog = [];
+  person.skipLog.push(log);
+
+  savePeople();
+  showCustomAlert(`💤 ${name}'s chores skipped for ${duration} (${reason})`);
+}
+
+// forceReassignChores
+// Hard reset for rotating chores and local data. Triggers full page reload.
+const forceReassignChores = () => {
+  logActivity({ type: "reassigned", triggeredBy: "admin" });
+
+  localStorage.removeItem("choreCycleStartDate");
+  localStorage.removeItem("choreData");
+  showCustomAlert("Rotating chores cleared. Reload manually if needed.");
+};
+
+
+
+/* ============================================================================
+   03. UI Rendering
+============================================================================ */
+// renderDashboard
 // Renders the main dashboard cards for each person.
 const renderDashboard = () => {
   document.getElementById("history").classList.add("hidden");
@@ -184,10 +355,19 @@ const renderDashboard = () => {
   const weekBanner = document.createElement("div");
   weekBanner.className = "chore__week-banner";
   weekBanner.innerHTML = `
-    <div class="week-banner__line"><i class="fas fa-calendar-day"></i> Today — ${today.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}</div>
-    <div class="week-banner__line">Weekly Chores — ${formatDate(startOfWeek)} to ${formatDate(endOfWeek)}</div>
-    <div class="week-banner__line">Biweekly Chores — ${formatDate(biweeklyStart)} to ${formatDate(biweeklyEnd)}</div>
-  `;
+  <div class="week-banner__row">
+    <div class="week-banner__column left">Day</div>
+    <div class="week-banner__column center">Week</div>
+    <div class="week-banner__column right">Biweekly</div>
+  </div>
+  <div class="week-banner__row">
+    <div class="week-banner__column left">${formatDate(today)}</div>
+    <div class="week-banner__column center">${formatDate(startOfWeek)} – ${formatDate(endOfWeek)}</div>
+    <div class="week-banner__column right">${formatDate(biweeklyStart)} – ${formatDate(biweeklyEnd)}</div>
+  </div>
+`;
+
+
   dashboardSection.insertBefore(weekBanner, dashboard);
 
   // ------------------- Render Each Person's Card -------------------
@@ -222,7 +402,10 @@ const renderDashboard = () => {
       <div class="card__header">
         <h3 class="card__name" style="color: ${person.color};">${person.name}</h3>
         <span class="card__totals">✅ Completed: ${person.completed.length} / ${person.chores.length}</span>
-        <span class="card__owed">$${person.dollarsOwed} owed</span>
+        <span class="card__owed ${person.paid ? 'paid' : ''}">
+        ${person.paid ? '$0 Paid' : `$${person.dollarsOwed} owed`}
+      </span>
+      
       </div>
       <ul class="card__chores">
         <li class="chore__section-title" style="background-color: ${person.color}">
@@ -237,11 +420,31 @@ const renderDashboard = () => {
     `;
 
     dashboard.appendChild(card);
+    const paidBtn = document.createElement("button");
+    paidBtn.className = person.paid ? "chore-btn chore-btn--paid" : "chore-btn chore-btn--unpaid";
+    paidBtn.textContent = person.paid ? "✔️ Paid" : "Mark Paid";    
+    paidBtn.onclick = () => openPaidModal(person.name);
+// Create a wrapper that holds both chores and button
+const contentWrapper = document.createElement("div");
+contentWrapper.style.display = "flex";
+contentWrapper.style.flexDirection = "column";
+contentWrapper.style.flexGrow = "1";
+
+// Inject the main card content (already HTML string)
+contentWrapper.innerHTML = card.innerHTML;
+card.innerHTML = ""; // clear to avoid duplication
+card.appendChild(contentWrapper);
+
+// Then append the paid button at the bottom
+paidBtn.style.marginTop = "2rem";  // adds space above the button
+
+card.appendChild(paidBtn);
+
+
   });
 };
 
-// ------------------- Function: renderChore -------------------
-// Renders a single chore line item for a person.
+// ------------------- Render Chore -------------------
 const renderChore = (person) => (choreObj) => {
   const { name, type, locked } = choreObj;
   const isDone = person.completed?.includes(name);
@@ -252,10 +455,11 @@ const renderChore = (person) => (choreObj) => {
   return `
     <li 
       class="card__chore ${isDone ? 'chore-done' : ''}" 
-      ${isDraggable ? 'draggable="true"' : 'draggable="false"'}
-      ${isDraggable ? `ondragstart="onDragStart(event, '${person.id}', '${name}')"` : ''}
+      draggable="${isDraggable}"
+      ondragstart="${isDraggable ? `onDragStart(event, '${person.id}', '${name}')` : 'event.preventDefault()'}"
       ${!isDraggable ? 'title="This chore is locked or already completed."' : ''}
     >
+
       <label class="chore-label">
         <input 
           type="checkbox"
@@ -273,11 +477,94 @@ const renderChore = (person) => (choreObj) => {
   `;
 };
 
-// ------------------- Function: renderHistory -------------------
-// Displays each person's completed chores in the history panel.
+// renderHistory
+// Displays global stats, insights, event log, and completed chores per person.
 const renderHistory = () => {
   const container = document.getElementById("historyContent");
   container.innerHTML = "";
+
+  // ------------------- Global Stats Card -------------------
+  const totalCompleted = people.reduce((sum, p) => sum + p.completed.length, 0);
+  const totalPeople = people.length;
+  const paidCount = people.filter(p => p.paid).length;
+  const owedCount = totalPeople - paidCount;
+  const totalOwed = people.reduce((sum, p) => sum + (p.paid ? 0 : p.dollarsOwed || 0), 0);
+  const totalPaid = people.reduce((sum, p) => sum + (p.paid ? p.dollarsOwed || 0 : 0), 0);
+
+  const statsCard = document.createElement("div");
+  statsCard.className = "history__card";
+  statsCard.innerHTML = `
+    <h3 class="history__title">📊 Team Summary</h3>
+    <ul class="history__list">
+      <li><strong>Total Chores Completed:</strong> ${totalCompleted}</li>
+      <li><strong>People Paid:</strong> ${paidCount} / ${totalPeople}</li>
+      <li><strong>Unpaid:</strong> ${owedCount} people, $${totalOwed}</li>
+      <li><strong>Paid:</strong> $${totalPaid}</li>
+    </ul>
+  `;
+  container.appendChild(statsCard);
+
+  // ------------------- Dynamic Stats -------------------
+  const totalChoresAssigned = people.reduce((sum, p) => sum + p.chores.length, 0);
+  const mostCompletedPerson = people.reduce((top, p) => 
+    p.completed.length > top.count ? { name: p.name, count: p.completed.length } : top, 
+    { name: "", count: 0 }
+  );
+  const mostMissedPerson = people.reduce((worst, p) => {
+    const missed = p.chores.length - p.completed.length;
+    return missed > worst.missed ? { name: p.name, missed } : worst;
+  }, { name: "", missed: 0 });
+
+  const statDetails = document.createElement("div");
+  statDetails.className = "history__card";
+  statDetails.innerHTML = `
+    <h3 class="history__title">📈 Insights</h3>
+    <ul class="history__list">
+      <li><strong>Completion Rate:</strong> ${Math.round((totalCompleted / totalChoresAssigned) * 100)}%</li>
+      <li><strong>Top Helper:</strong> ${mostCompletedPerson.name} (${mostCompletedPerson.count} chores)</li>
+      <li><strong>Most Missed:</strong> ${mostMissedPerson.name} (${mostMissedPerson.missed} not done)</li>
+    </ul>
+  `;
+  container.appendChild(statDetails);
+
+  // ------------------- Activity Log (Changelog) -------------------
+  const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
+  const logCard = document.createElement("div");
+  logCard.className = "history__card";
+  logCard.innerHTML = `
+    <h3 class="history__title">📜 Activity Log</h3>
+    <ul class="history__list">
+      ${logs.length === 0
+        ? "<li>No activity logged.</li>"
+        : logs.slice(0, 10).map(log => {
+          const date = new Date(log.time).toLocaleString();
+        
+          switch (log.type) {
+            case "completed":
+              return `<li>✅ <strong>${log.person}</strong> completed "<em>${log.task}</em>" — <span class="log-date">${date}</span></li>`;
+            case "reassigned":
+              return `<li>🔄 Rotating chores were reassigned by admin — <span class="log-date">${date}</span></li>`;
+            case "transferred":
+              return `<li>🤝 <strong>${log.to}</strong> helped <strong>${log.from}</strong> with "<em>${log.task}</em>" — <span class="log-date">${date}</span></li>`;
+            case "skipped":
+              return `<li>😴 <strong>${log.person}</strong>'s chores skipped for the ${log.duration} <em>(${log.reason})</em> — <span class="log-date">${date}</span></li>`;
+            case "manualReset":
+              return `<li>🧹 Manual chore reset triggered — <span class="log-date">${date}</span></li>`;
+            case "sandbox":
+              return `<li>${log.status === "enabled" ? "📴" : "🟢"} Sandbox Mode ${log.status === "enabled" ? "Enabled" : "Disabled"} — <span class="log-date">${date}</span></li>`;
+            default:
+              return `<li>📦 ${log.type} — ${JSON.stringify(log)} — <span class="log-date">${date}</span></li>`;
+          }
+        }).join("")
+        
+      }
+    </ul>
+  `;
+  container.appendChild(logCard);
+
+  // ------------------- Per-Person Chore Logs -------------------
+  const peopleWrapper = document.createElement("div");
+  peopleWrapper.className = "history__container";
 
   people.forEach(person => {
     const wrapper = document.createElement("div");
@@ -305,11 +592,13 @@ const renderHistory = () => {
 
     wrapper.appendChild(title);
     wrapper.appendChild(ul);
-    container.appendChild(wrapper);
+    peopleWrapper.appendChild(wrapper);
   });
+
+  container.appendChild(peopleWrapper);
 };
 
-// ------------------- Function: renderCalendar -------------------
+// renderCalendar
 // Builds the monthly calendar with chore status, resets, and missed indicators.
 const renderCalendar = () => {
   const container = document.getElementById("calendarContent");
@@ -380,12 +669,10 @@ const renderCalendar = () => {
   container.appendChild(calendarGrid);
 };
 
-// ============================================================================
-// ------------------- Section: Chore Completion -------------------
-// Handles toggling a chore's completion status and updates the UI/storage.
-// ============================================================================
-
-// ------------------- Function: completeChore -------------------
+/* ============================================================================
+   04. Chore Completion & Toggling
+============================================================================ */
+// completeChore
 // Toggles whether a chore is completed for a given person.
 const completeChore = (name, choreName) => {
   const person = people.find(p => p.name.toLowerCase() === name.toLowerCase());
@@ -407,74 +694,61 @@ const completeChore = (name, choreName) => {
   } else {
     person.completed.push(choreName);
     console.log(`[app.js]: ✅ Marked '${choreName}' as completed for ${person.name}`);
+  
+    logActivity({
+      type: "completed",
+      person: person.name,
+      task: choreName
+    });
   }
+
 
   localStorage.setItem("choreData", JSON.stringify(people));
   renderDashboard();
 };
 
-window.completeChore = completeChore;
+// togglePaid
+// Toggles paid state for a person and updates localStorage + UI
+const togglePaid = (name) => {
+  const person = people.find(p => p.name === name);
+  if (!person) return;
+  person.paid = !person.paid;
 
-  // ============================================================================
-// ------------------- Section: Sidebar Controls -------------------
-// Handles navigation, modal triggers, resets, and section toggling.
-// ============================================================================
+  localStorage.setItem("choreData", JSON.stringify(people));
+  renderDashboard();
+};
 
-// ------------------- Function: toggleSidebar -------------------
+/* ============================================================================
+   05. Sidebar & Modal Control
+============================================================================ */
+//populateAdminDropdowns
+function populateAdminDropdowns() {
+  const personOptions = people.map(p => `<option value="${p.name}">${p.name}</option>`).join("");
+
+  const dollarSelect = document.getElementById("adminDollarSelect");
+  const skipPersonSelect = document.getElementById("skipPersonSelect");
+  const editChoresSelect = document.getElementById("editChoresPersonSelect");
+
+  if (dollarSelect) dollarSelect.innerHTML = personOptions;
+  if (skipPersonSelect) skipPersonSelect.innerHTML = personOptions;
+  if (editChoresSelect) editChoresSelect.innerHTML = personOptions;
+}
+
+// toggleSidebar
 // Toggles sidebar visibility.
 const toggleSidebar = () => {
   document.getElementById("sidebar").classList.toggle("open");
 };
 
-window.toggleSidebar = toggleSidebar; // <-- ADD THIS LINE
-
-
-// ------------------- Function: resetChores -------------------
-// Opens the reset confirmation modal.
-const resetChores = () => {
-  toggleSidebar();
-  document.getElementById("resetModal").classList.add("show");
-};
-
-window.resetChores = resetChores;
-
-// ------------------- Function: confirmReset -------------------
-// Resets weekly completion and adds $1 for each missed chore.
-const confirmReset = () => {
-  people.forEach(person => {
-    const completed = person.completed || [];
-
-    person.chores.forEach(chore => {
-      const wasCompleted = completed.includes(chore.name);
-      if (!wasCompleted) {
-        person.dollarsOwed = (person.dollarsOwed || 0) + 1;
-      }
-    });
-
-    person.completed = [];
-  });
-
-  localStorage.setItem("choreData", JSON.stringify(people));
-  closeModal();
-  renderDashboard();
-
-  console.log("[app.js]: ✅ Chores reset and missed chores tallied.");
-};
-
-window.confirmReset = confirmReset;
-
-// ------------------- Function: closeModal -------------------
-// Hides the modal dialog.
+// closeModal
 const closeModal = () => {
-  document.getElementById("resetModal").classList.remove("show");
+  document.querySelectorAll(".modal").forEach(m => m.classList.remove("show"));
 };
 
-window.closeModal = closeModal;
-
-// ------------------- Function: showSection -------------------
+// showSection
 // Shows one section and hides the others (dashboard, history, calendar).
 const showSection = (idToShow) => {
-  const sections = ["dashboard", "history", "calendar"];
+  const sections = ["dashboard", "history", "calendar", "admin"];
 
   sections.forEach(id => {
     const el = document.getElementById(id);
@@ -497,77 +771,279 @@ const showSection = (idToShow) => {
   if (idToShow === "dashboard") renderDashboard();
   if (idToShow === "history") renderHistory();
   if (idToShow === "calendar") renderCalendar();
+  if (idToShow === "admin") populateAdminDropdowns(); // ✅ updated full function
+
+  // ✅ Close sidebar if open
+  document.getElementById("sidebar")?.classList.remove("open");
+  
+  // ✅ Close any open modal (like Mark Paid or Reassign)
+  document.querySelectorAll(".modal.show").forEach(modal => modal.classList.remove("show"));  
 };
 
-window.showSection = showSection;
-
-// ------------------- Function: viewHistory -------------------
+// viewHistory
 // Shows the history panel and closes sidebar.
 const viewHistory = () => {
   showSection("history");
   toggleSidebar();
 };
 
-window.viewHistory = viewHistory;
-
-// ------------------- Function: viewCalendar -------------------
+// viewCalendar
 // Shows the calendar view and closes sidebar.
 const viewCalendar = () => {
   toggleSidebar();
   showSection("calendar");
 };
 
-window.viewCalendar = viewCalendar;
-
-// ------------------- Function: manualOverride -------------------
-// Placeholder for override functionality.
-const manualOverride = () => {
+// openReassignModal
+// Opens the reassignment confirmation dialog.
+const openReassignModal = () => {
   toggleSidebar();
-  alert("🛠️ Manual override — feature coming soon!");
+  document.getElementById("reassignModal").classList.add("show");
 };
 
-window.manualOverride = manualOverride;
+// openManualResetModal
+const openManualResetModal = () => {
+  document.getElementById("manualResetModal").classList.add("show");
+};
 
-  /* ============================================================================
-     05. Future Features (Placeholders)
-  ============================================================================ */
-  
-  // TODO: Save completed chores to localStorage
-  // TODO: Track missed chores and deduct points
-  // TODO: Implement daily/weekly/monthly rotation logic
-  // TODO: Add ability to cover chores for others (earn bonus)
-  // TODO: Track and display completed chore history
+// confirmManualReset
+const confirmManualReset = () => {
+  manualResetChores();
+  closeModal();
+};
 
-// ============================================================================
-// ------------------- Section: Drag-and-Drop Chores -------------------
-// Allows chores to be dragged between people and reassigns visual ownership.
-// ============================================================================
+// openSkipChoreModal 
+const openSkipChoreModal = () => {
+  document.getElementById("skipChoreModal").classList.add("show");
+};
 
+// openWeeklySummaryModal
+const openWeeklySummaryModal = () => {
+  const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
+  const start = new Date(getStartOfWeek());
+  const thisWeekLogs = logs.filter(log => new Date(log.time) >= start);
+
+  const completedMap = {};
+  const skippedMap = {};
+
+  thisWeekLogs.forEach(log => {
+    if (log.type === "completed") {
+      completedMap[log.person] = (completedMap[log.person] || 0) + 1;
+    }
+    if (log.type === "skipped") {
+      skippedMap[log.person] = (skippedMap[log.person] || 0) + 1;
+    }
+  });
+
+  const topHelpers = Object.entries(completedMap)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3)
+    .map(([name, count]) => `<li><strong>${name}</strong>: ✅ ${count} completed</li>`);
+
+  const mostSkipped = Object.entries(skippedMap)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 1)
+    .map(([name, count]) => `<li><strong>${name}</strong>: 💤 ${count} skips</li>`);
+
+  const totalDone = Object.values(completedMap).reduce((sum, n) => sum + n, 0);
+
+  document.getElementById("weeklySummaryContent").innerHTML = `
+    <p><strong>Total Completed:</strong> ${totalDone}</p>
+    <p><strong>Top Helpers:</strong></p>
+    <ul>${topHelpers.join("") || "<li>None</li>"}</ul>
+    <p><strong>Most Skipped:</strong></p>
+    <ul>${mostSkipped.join("") || "<li>None</li>"}</ul>
+  `;
+
+  document.getElementById("weeklySummaryModal").classList.add("show");
+};
+
+
+// toggleSandboxMode
+const toggleSandboxMode = () => {
+  const isEnabled = document.getElementById("sandboxToggle").checked;
+  localStorage.setItem("sandboxMode", isEnabled ? "true" : "false");
+
+  logActivity({
+    type: "sandbox",
+    status: isEnabled ? "enabled" : "disabled"
+  });
+
+  showCustomAlert(`Sandbox Mode ${isEnabled ? "Enabled" : "Disabled"}`);
+};
+
+
+
+
+// openResetAllModal 
+const openResetAllModal = () => {
+  document.getElementById("resetModal").classList.add("show");
+};
+
+// confirmSkipChore 
+const confirmSkipChore = () => {
+  applySkipChore();
+  closeModal();
+};
+
+//openDollarAdjustModal
+const openDollarAdjustModal = () => {
+  document.getElementById("dollarAdjustModal").classList.add("show");
+};
+
+const confirmDollarAdjustment = () => {
+  applyDollarAdjustment();
+  closeModal();
+};
+
+// openPreviewResetModal
+const openPreviewResetModal = () => {
+  const skippedNames = getSkippedPeopleThisWeek();
+  const preview = people.map(p => {
+    const isSkipped = skippedNames.includes(p.name.toLowerCase());
+    return `<li><strong>${p.name}</strong>: ${isSkipped ? "⏸ Skipped (no reset)" : "✅ Will reset chores"}</li>`;
+  });
+
+  document.getElementById("previewResetContent").innerHTML = `<ul>${preview.join("")}</ul>`;
+  document.getElementById("previewResetModal").classList.add("show");
+};
+
+const getSkippedPeopleThisWeek = () => {
+  const logs = JSON.parse(localStorage.getItem("activityLog") || "[]");
+
+  return logs
+    .filter(log =>
+      log.type === "skipped" &&
+      ["day", "week"].includes(log.duration) &&
+      new Date(log.time) >= new Date(getStartOfWeek())
+    )
+    .map(log => log.person.toLowerCase());
+};
+
+// confirmReassign
+// Confirms chore reassignment and triggers a full reload.
+const confirmReassign = () => {
+  logActivity({ type: "reassigned", triggeredBy: "admin" });
+
+  localStorage.removeItem("choreCycleStartDate");
+  localStorage.removeItem("choreData");
+  closeModal();
+
+  showCustomAlert("Rotating chores cleared. Reload manually if needed.");
+};
+
+
+// setupSwipeSidebar
+const setupSwipeSidebar = () => {
+  let startX = 0;
+
+  document.addEventListener("touchstart", (e) => {
+    startX = e.touches[0].clientX;
+  });
+
+  document.addEventListener("touchend", (e) => {
+    const endX = e.changedTouches[0].clientX;
+    const deltaX = endX - startX;
+
+    // Swipe left to close
+    if (deltaX < -50 && document.getElementById("sidebar").classList.contains("open")) {
+      toggleSidebar();
+    }
+  });
+};
+
+setupSwipeSidebar();
+
+// openPaidModal
+// Opens the "Mark Paid" confirmation modal for a selected person.
+let pendingPaidName = null;
+
+const openPaidModal = (name) => {
+  pendingPaidName = name;
+
+  requestAnimationFrame(() => {
+    const modal = document.getElementById("paidModal");
+    if (!modal) {
+      console.error("❌ paidModal not found in DOM.");
+      return;
+    }
+    modal.classList.add("show");
+  });
+};
+
+// confirmMarkPaid 
+// Confirms the paid toggle and closes the modal.
+const confirmMarkPaid = () => {
+  if (pendingPaidName) {
+    togglePaid(pendingPaidName);
+    pendingPaidName = null;
+  }
+  closeModal();
+};
+
+// Close Sidebar When Clicking Outside 
+document.addEventListener("click", (e) => {
+  const sidebar = document.getElementById("sidebar");
+  const toggleBtn = document.querySelector(".header__menu");
+
+  const sidebarIsOpen = sidebar?.classList.contains("open");
+  const clickedInsideSidebar = sidebar?.contains(e.target);
+  const clickedToggleButton = toggleBtn?.contains(e.target);
+
+  if (sidebarIsOpen && !clickedInsideSidebar && !clickedToggleButton) {
+    sidebar.classList.remove("open");
+  }
+});
+
+//showCustomAlert
+function showCustomAlert(message, duration = 2500) {
+  const alertBox = document.getElementById("customAlert");
+  const alertText = document.getElementById("customAlertText");
+
+  if (!alertBox || !alertText) return;
+
+  alertText.textContent = message;
+  alertBox.classList.remove("hidden");
+  alertBox.classList.add("show");
+
+  setTimeout(() => {
+    alertBox.classList.remove("show");
+    setTimeout(() => {
+      alertBox.classList.add("hidden");
+    }, 300); // matches transition duration
+  }, duration);
+}
+
+
+/* ============================================================================
+   06. Drag-and-Drop Logic
+============================================================================ */
 let draggedChoreInfo = null;
 
-// ------------------- Function: onDragStart -------------------
+// onDragStart
 // Stores drag source data and sets drag transfer payload.
 const onDragStart = (event, fromId, taskName) => {
   draggedChoreInfo = { fromId, taskName };
   event.dataTransfer.setData("text/plain", taskName);
 };
 
-// ------------------- Function: onDragOver -------------------
+// onDragOver
 // Required to allow drop target to accept dragged items.
 const onDragOver = (event) => {
   event.preventDefault();
 };
 
-// ------------------- Function: onDrop -------------------
+// onDrop
 // Transfers a chore to another person’s view (with original ownership).
 const onDrop = (event, toId) => {
   event.preventDefault();
 
   if (!draggedChoreInfo) {
     console.warn("[app.js]: ⚠️ Drag event dropped with no chore info.");
+    draggedChoreInfo = null; // ensure clean state
     return;
   }
-
+  
   const { fromId, taskName } = draggedChoreInfo;
 
   if (fromId === toId) {
@@ -613,9 +1089,21 @@ const onDrop = (event, toId) => {
       originalOwner: originalOwner.name,
       locked: true
     });
-
+  
+    // 🆕 Remove chore from original owner's list
+    originalOwner.chores = originalOwner.chores.filter(c => c.name !== taskName);
+  
+    // 🆕 ✅ Add to activity log
+    logActivity({
+      type: "transferred",
+      from: originalOwner.name,
+      to: helper.name,
+      task: taskName
+    });
+  
     console.log(`[app.js]: 🛠️ ${helper.name} helped with ${taskName} from ${originalOwner.name}`);
   }
+  
 
   helper.dollarsOwed = Math.max((helper.dollarsOwed || 0) - 1, 0);
 
@@ -624,29 +1112,36 @@ const onDrop = (event, toId) => {
   draggedChoreInfo = null;
 };
 
-// ------------------- Register Service Worker -------------------
-if ("serviceWorker" in navigator) {
-  window.addEventListener("load", () => {
-    navigator.serviceWorker
-      .register("./sw.js")
-      .then(() => console.log("[PWA] Service Worker registered ✅"))
-      .catch(err => console.error("[PWA] Service Worker failed", err));
-  });
-}
-
-// ============================================================================
-// ------------------- Init: Load Data & Start App -------------------
-// Initializes global people array and triggers chore logic
-// ============================================================================
+/* ============================================================================
+   07. Init & Data Loading
+   Initializes global `people` array and triggers data loading and setup.
+============================================================================ */
 
 // ------------------- Global Variables -------------------
 let people = [];
 let savedPeople = [];
 
-setInterval(autoResetChoresIfNeeded, 60000); // Run chore reset checks every minute
+// ------------------- Sandbox Mode -------------------
+const isSandboxMode = localStorage.getItem("sandboxMode") === "true";
 
+document.addEventListener("DOMContentLoaded", () => {
+  const banner = document.getElementById("sandboxBanner");
+  const checkbox = document.getElementById("sandboxToggle");
+
+  if (isSandboxMode && banner) banner.classList.remove("hidden");
+  if (checkbox) checkbox.checked = isSandboxMode;
+});
+
+
+// Periodically check for reset conditions (e.g., Sunday midnight)
+setInterval(autoResetChoresIfNeeded, 60000); // Check every 60 seconds
+
+// ------------------- Function: Init Async Loader -------------------
+// Loads people and chore data from Firebase (or fallback to localStorage),
+// then processes and initializes them for current week state.
 (async () => {
   try {
+    // Attempt to load from cloud sync (Firebase)
     const cloudData = await window.loadChoreData("myHouseholdId");
     savedPeople = cloudData?.people || [];
   } catch (err) {
@@ -655,6 +1150,7 @@ setInterval(autoResetChoresIfNeeded, 60000); // Run chore reset checks every min
     savedPeople = localData ? JSON.parse(localData) : [];
   }
 
+  // Fetch data.json from project (permanent + rotating chore templates)
   fetch("data.json")
     .then(res => {
       if (!res.ok) throw new Error("Invalid response from data.json");
@@ -670,50 +1166,56 @@ setInterval(autoResetChoresIfNeeded, 60000); // Run chore reset checks every min
           type: c.type,
           origin: "permanent"
         }));
-
+      
         const savedPerson = savedPeople.find(p => p.id === person.id) || {};
         let rotatingChores = [];
-        
-// ------------------- Deterministic Rotating Chores -------------------
-if (isNewWeek) {
-  rotatingChores = chores.rotating
-    .filter((c, i) => {
-      const isBiweekly = c.type === "biweekly";
-      return (!isBiweekly || isBiweeklyWeek()) && i % personList.length === index;
-    })
-    .map(c => ({
-      name: c.task,
-      type: c.type,
-      origin: "rotating"
-    }));
-
-  // Save assigned people + chores to localStorage immediately
-  savedPerson.chores = [...baseChores, ...rotatingChores];
-  localStorage.setItem("choreData", JSON.stringify(
-    personList.map(p => {
-      const sp = p.id === person.id ? savedPerson : savedPeople.find(e => e.id === p.id) || {};
-      return {
-        ...p,
-        chores: sp.chores || [],
-        completed: sp.completed || [],
-        dollarsOwed: sp.dollarsOwed ?? p.dollarsOwed ?? 0
-      };
-    })
-  ));
-} else {
-  const savedChores = savedPerson.chores || [];
-  rotatingChores = savedChores.filter(c => c.origin === "rotating");
-}
-
+      
+        if (isNewWeek) {
+          rotatingChores = chores.rotating
+            .filter((c, i) => {
+              const isBiweekly = c.type === "biweekly";
+              return (!isBiweekly || isBiweeklyWeek()) && i % personList.length === index;
+            })
+            .map(c => ({
+              name: c.task,
+              type: c.type,
+              origin: "rotating"
+            }));
+      
+          savedPerson.chores = [...baseChores, ...rotatingChores];
+          savedPerson.completed = []; // ✅ wipe completions only on new week
+      
+          localStorage.setItem("choreData", JSON.stringify(
+            personList.map(p => {
+              const sp = p.id === person.id ? savedPerson : savedPeople.find(e => e.id === p.id) || {};
+              return {
+                ...p,
+                chores: sp.chores || [],
+                completed: sp.completed || [],
+                dollarsOwed: sp.dollarsOwed ?? p.dollarsOwed ?? 0,
+                paid: sp.paid ?? false
+              };
+            })
+          ));
+        } else {
+          const savedChores = savedPerson.chores || [];
+          rotatingChores = savedChores.filter(c => c.origin === "rotating");
+        }
+      
+        const saved = savedPeople.find(p => p.id === person.id);
 
         return {
           ...person,
-          chores: [...baseChores, ...rotatingChores],
-          completed: isNewWeek ? [] : (savedPerson.completed || []),
-          dollarsOwed: savedPerson.dollarsOwed ?? person.dollarsOwed ?? 0,
+          chores: saved?.chores || [...baseChores, ...rotatingChores],
+          completed: saved?.completed || [],
+          dollarsOwed: saved?.dollarsOwed ?? person.dollarsOwed ?? 0,
+          paid: saved?.paid ?? false,
           points: 0
         };
+        
       });
+      
+      localStorage.setItem("choreData", JSON.stringify(people)); // ✅ ADD THIS
 
       if (isNewWeek) {
         updateChoreCycleStartDate();
@@ -726,10 +1228,78 @@ if (isNewWeek) {
       }
 
       renderDashboard();
+
+      // ✅ ✅ ADD THIS — Sandbox Mode Visual + Toggle Sync
+      const banner = document.getElementById("sandboxBanner");
+      const sandboxCheckbox = document.getElementById("sandboxToggle");
+
+      if (isSandboxMode && banner) {
+        banner.classList.remove("hidden");
+      }
+      if (sandboxCheckbox) {
+        sandboxCheckbox.checked = isSandboxMode;
+      }
     })
     .catch(err => {
       console.error("[app.js]: ❌ Failed to load or process data.json", err);
-      alert("❌ Failed to load chore data. Please check your file or reload.");
+      showCustomAlert("❌ Failed to load chore data. Please check your file or reload.");
     });
 })();
+
+/* ============================================================================
+   08. Global Exports (window bindings)
+============================================================================ */
+
+// ------------------- Core Completion & Toggling -------------------
+window.completeChore = completeChore;
+window.togglePaid = togglePaid;
+
+// ------------------- Sidebar & Modal Controls -------------------
+window.toggleSidebar = toggleSidebar;
+window.closeModal = closeModal;
+window.showSection = showSection;
+window.viewHistory = viewHistory;
+window.viewCalendar = viewCalendar;
+
+// ------------------- Chore Reassignment -------------------
+window.forceReassignChores = forceReassignChores;
+window.openReassignModal = openReassignModal;
+window.confirmReassign = confirmReassign;
+window.reassignRotatingChores = reassignRotatingChores;
+
+// ------------------- Admin Controls -------------------
+window.applyDollarAdjustment = applyDollarAdjustment;
+window.toggleAutoReset = toggleAutoReset;
+window.openEditChoresModal = openEditChoresModal;
+window.closeEditChoresModal = closeEditChoresModal;
+window.saveEditedChores = saveEditedChores;
+window.previewReset = previewReset;
+window.confirmResetAll = confirmResetAll;
+window.applySkipChore = applySkipChore;
+window.logActivity = logActivity;
+window.openManualResetModal = openManualResetModal;
+window.confirmManualReset = confirmManualReset;
+window.openSkipChoreModal = openSkipChoreModal;
+window.confirmSkipChore = confirmSkipChore;
+window.openDollarAdjustModal = openDollarAdjustModal;
+window.confirmDollarAdjustment = confirmDollarAdjustment;
+window.openPreviewResetModal = openPreviewResetModal;
+window.openResetAllModal = openResetAllModal;
+window.openWeeklySummaryModal = openWeeklySummaryModal;
+window.toggleSandboxMode = toggleSandboxMode;
+window.confirmMarkPaid = confirmMarkPaid;
+
+window.onDragStart = onDragStart;
+window.onDragOver = onDragOver;
+window.onDrop = onDrop;
+
+// ------------------- Service Worker Registration -------------------
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker
+      .register("./sw.js")
+      .then(() => console.log("[PWA] Service Worker registered ✅"))
+      .catch(err => console.error("[PWA] Service Worker failed", err));
+  });
+}
 
