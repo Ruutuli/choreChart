@@ -1692,22 +1692,17 @@ function autoResetChoresIfNeeded(forDate = new Date()) {
   const lastReset = JSON.parse(localStorage.getItem("lastChoreReset") || "{}");
   const resetSummary = [];
   let didReset = false;
+  const missed = [];
 
   people.forEach(person => {
-    if (!Array.isArray(person.completed)) {
-      console.log(`⚠️ Skipping ${person.name} — no completed array.`);
-      return;
-    }
+    if (!Array.isArray(person.completed)) return;
 
     const originalCount = person.completed.length;
-
     const newCompleted = person.completed.filter(task => {
-      const allChores = [...(person.chores || []), ...(choreData.rotating || [])];
+      const allChores = person.chores || [];
       const matched = allChores.find(c => c.name === task || c.task === task);
       const type = matched?.type?.toLowerCase();
-
       if (!matched || !type) return true;
-
       return !shouldReset(type, lastReset[type]);
     });
 
@@ -1718,19 +1713,43 @@ function autoResetChoresIfNeeded(forDate = new Date()) {
       didReset = true;
       resetSummary.push(`🔁 ${person.name}: ${removedCount} chore(s) reset`);
     }
+
+    // NEW: Track missed chores if type is due today
+    const missedToday = (person.chores || []).filter(chore => {
+      const type = chore.type?.toLowerCase();
+      return shouldReset(type, lastReset[type]) && !person.completed.includes(chore.name);
+    });
+
+    if (missedToday.length > 0) {
+      person.dollarsOwed = (person.dollarsOwed || 0) + missedToday.length;
+      person.paid = false;
+
+      missed.push({ person: person.name, amount: missedToday.length });
+
+      logActivity({
+        type: "missedChores",
+        person: person.name,
+        amount: missedToday.length
+      });
+    }
   });
 
-  if (didReset) {
+  if (didReset || missed.length > 0) {
     const todayStr = forDate.toDateString();
     ["daily", "weekly", "biweekly", "monthly", "quarterly"].forEach(type => {
       if (shouldReset(type, lastReset[type])) {
         lastReset[type] = todayStr;
-        console.log(`📌 Updating reset timestamp for "${type}" to ${todayStr}`);
       }
     });
 
+    localStorage.setItem("lastChoreReset", JSON.stringify(lastReset));
     savePeople();
     debouncedFirebaseSave();
+  }
+
+  // NEW: Rotate chores only if daily reset occurred
+  if (shouldReset("daily", lastReset["daily"])) {
+    reassignRotatingChores();
   }
 
   return resetSummary;
