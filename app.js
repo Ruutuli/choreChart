@@ -1316,53 +1316,55 @@ async function fetchActivityLogsFromFirestore(householdId = "default") {
 window.fetchActivityLogsFromFirestore = fetchActivityLogsFromFirestore;
 
 
-// ------------------- Auto Weekly Reset (Firebase Synced) -------------------
+// ------------------- Auto Weekly + Daily Reset (Firebase Synced) -------------------
 async function autoResetIfNeeded() {
-  const docRef = window.doc(window.db, "meta", "lastReset"); // ✅ Use Firestore doc ref
-  const snapshot = await window.getDoc(docRef); // ✅ Use Firestore getDoc
-
-  const existing = snapshot.exists() ? snapshot.data() : null;
+  const docRef = window.doc(window.db, "meta", "lastReset");
+  const snapshot = await window.getDoc(docRef);
+  const existing = snapshot.exists() ? snapshot.data() : {};
   const now = new Date();
+  const nowISO = now.toISOString();
+  const todayStr = now.toISOString().split("T")[0];
 
-  let shouldReset = false;
+  const updates = {};
 
-  if (!existing || !existing.weekly) {
-    console.log("⚠️ No lastReset timestamp found. Performing first reset.");
-    shouldReset = true;
-  } else {
-    const lastResetDate = new Date(existing.weekly);
-    const daysSinceReset = (now - lastResetDate) / (1000 * 60 * 60 * 24);
-    const isSunday = now.getDay() === 0;
-    shouldReset = isSunday && daysSinceReset >= 7;
+  // ---------------- Daily Reset ----------------
+  const lastDaily = existing.daily ? new Date(existing.daily).toDateString() : null;
+  const today = now.toDateString();
+
+  if (lastDaily !== today) {
+    console.log("🔁 Daily reset: tracking missed chores");
+    await handleDailyMissedChores();
+    updates.daily = nowISO;
   }
 
-  if (shouldReset) {
-    console.log("⏰ Auto-reset triggered");
+  // ---------------- Weekly Reset ----------------
+  const lastWeekly = existing.weekly ? new Date(existing.weekly).toDateString() : null;
+  const isSunday = now.getDay() === 0;
+
+  if (isSunday && lastWeekly !== today) {
+    console.log("🔁 Weekly reset: reassigning chores and clearing completions");
 
     reassignRotatingChores();
     assignAllChores();
+
     people.forEach(p => {
       p.completed = [];
-      p.dollarsOwed = 0;
       p.paid = true;
+      p.dollarsOwed = 0;
     });
 
+    updates.weekly = nowISO;
+    updates.biweekly = nowISO;
+    updates.monthly = nowISO;
+    updates.quarterly = nowISO;
+  }
+
+  // ---------------- Save if Anything Changed ----------------
+  if (Object.keys(updates).length > 0) {
+    await window.setDoc(docRef, { ...existing, ...updates }, { merge: true });
     savePeople();
     debouncedFirebaseSave();
-
-    const nowISO = now.toISOString();
-    const updated = {
-      daily: nowISO,
-      weekly: nowISO,
-      biweekly: nowISO,
-      monthly: nowISO,
-      quarterly: nowISO
-    };
-    await window.setDoc(docRef, updated, { merge: true }); // ✅ Write to Firestore
-
-    showCustomAlert("🔁 Auto-reset: Chores and progress reset for the week.");
-  } else {
-    console.log("📅 No auto-reset needed today.");
+    showCustomAlert("🔁 Chores updated via scheduled reset.");
   }
 }
 
@@ -1475,6 +1477,33 @@ function manualResetChores() {
   closeModal();
   updateLastUpdatedText(); // ✅ ADD HERE
   showCustomAlert("🔁 Manual reset complete. Rotating chores reassigned and missed chores tallied.");
+}
+
+// ------------------- Function: handleDailyMissedChores -------------------
+// Adds $1 per missed daily chore for each user, logs activity
+async function handleDailyMissedChores() {
+  const snapshot = people.map(p => ({
+    id: p.id,
+    name: p.name,
+    chores: Array.isArray(p.chores) ? p.chores.filter(c => c.type === 'daily').map(c => c.name) : [],
+    completed: [...(p.completed || [])],
+    dollarsOwed: p.dollarsOwed || 0
+  }));
+
+  snapshot.forEach(p => {
+    const missed = p.chores.filter(task => !p.completed.includes(task));
+    if (missed.length > 0) {
+      const person = people.find(x => x.id === p.id);
+      person.dollarsOwed = (person.dollarsOwed || 0) + missed.length;
+      person.paid = false;
+
+      logActivity({
+        type: "missedChores",
+        person: p.name,
+        amount: missed.length
+      });
+    }
+  });
 }
 
 // ------------------- Function: confirmResetAll -------------------
