@@ -1332,10 +1332,26 @@ async function autoResetIfNeeded() {
   const today = now.toDateString();
 
   if (lastDaily !== today) {
-    console.log("🔁 Daily reset: tracking missed chores");
+    console.log("🔁 Daily reset: tracking missed chores + rotating dailies");
+  
     await handleDailyMissedChores();
+    reassignRotatingChores(); // rotate daily chores
+  
+    people.forEach(p => {
+      // Only clear out daily completions, not all
+      const dailyOnly = p.completed?.filter(taskName => {
+        const isDaily = data.chores?.rotating?.some(
+          c => c.task === taskName && c.type === "daily"
+        );
+        return !isDaily;
+      }) || [];
+  
+      p.completed = dailyOnly; // preserve weekly/monthly completions
+    });
+  
     updates.daily = nowISO;
   }
+  
 
   // ---------------- Weekly Reset ----------------
   const lastWeekly = existing.weekly ? new Date(existing.weekly).toDateString() : null;
@@ -1828,6 +1844,7 @@ window.togglePaid                = togglePaid;
 window.toggleSandboxMode         = toggleSandboxMode;
 window.toggleSidebar             = toggleSidebar;
 window.viewHistory               = viewHistory;
+window.autoResetIfNeeded         = autoResetIfNeeded;
 
 // ------------------- Function: refreshChorePage -------------------
 window.refreshChorePage = function () {
