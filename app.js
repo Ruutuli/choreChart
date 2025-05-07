@@ -1200,7 +1200,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // 🕒 Set initial last updated timestamp
   updateLastUpdatedText();
-  updateLastUpdatedText(); // ✅ NEW: Show on load
 
   // 🔁 Auto-reset logic (Firebase-based)
   await initializeResetTimestamps();        // ✅ Ensure meta.lastReset structure exists
@@ -1248,10 +1247,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     choreData = data.chores;
 
     renderDashboard();
-    autoResetChoresIfNeeded();
-
-    // ------------------- Midnight Reset Poll -------------------
-    setInterval(autoResetChoresIfNeeded, 60000); // Check every 60s
+    await autoResetIfNeeded(); // ✅ Use new reset function
 
   } catch (err) {
     console.error("[app.js]: ❌ Failed to load chore data", err);
@@ -1324,62 +1320,125 @@ async function autoResetIfNeeded() {
   const now = new Date();
   const nowISO = now.toISOString();
   const todayStr = now.toISOString().split("T")[0];
-
   const updates = {};
 
-  // ---------------- Daily Reset ----------------
-  const lastDaily = existing.daily ? new Date(existing.daily).toDateString() : null;
-  const today = now.toDateString();
+  // Helper to check if a frequency needs reset
+  const needsReset = (frequency, lastReset) => {
+    if (!lastReset) return true;
+    const lastDate = new Date(lastReset);
+    const today = new Date();
+    
+    switch (frequency) {
+      case "daily":
+        return lastDate.toDateString() !== today.toDateString();
+      case "weekly":
+        return today.getDay() === 0 && lastDate.toDateString() !== today.toDateString();
+      case "biweekly":
+        const weekNumber = Math.floor((Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) -
+          Date.UTC(today.getFullYear(), 0, 1)) / (7 * 24 * 60 * 60 * 1000)) + 1;
+        return today.getDay() === 0 && weekNumber % 2 === 0 && lastDate.toDateString() !== today.toDateString();
+      case "monthly":
+        return today.getDate() === 1 && lastDate.toDateString() !== today.toDateString();
+      case "quarterly":
+        return today.getDate() === 1 && [0, 3, 6, 9].includes(today.getMonth()) && 
+          lastDate.toDateString() !== today.toDateString();
+      default:
+        return false;
+    }
+  };
 
-  if (lastDaily !== today) {
-    console.log("🔁 Daily reset: tracking missed chores + rotating dailies");
-  
-    await handleDailyMissedChores();
-    reassignRotatingChores(); // rotate daily chores
-  
-    people.forEach(p => {
-      // Only clear out daily completions, not all
-      const dailyOnly = p.completed?.filter(taskName => {
-        const isDaily = data.chores?.rotating?.some(
-          c => c.task === taskName && c.type === "daily"
-        );
-        return !isDaily;
-      }) || [];
-  
-      p.completed = dailyOnly; // preserve weekly/monthly completions
-    });
-  
+  // Track which frequencies need reset
+  const frequencies = ["daily", "weekly", "biweekly", "monthly", "quarterly"];
+  const needsResetMap = {};
+  frequencies.forEach(freq => {
+    needsResetMap[freq] = needsReset(freq, existing[freq]);
+  });
+
+  // If nothing needs reset, return early
+  if (!Object.values(needsResetMap).some(Boolean)) {
+    return;
+  }
+
+  // Process each person's chores
+  for (const person of people) {
+    const missedChores = [];
+    const completedToKeep = [];
+
+    // Check each chore
+    for (const chore of (person.chores || [])) {
+      const type = chore.type?.toLowerCase();
+      if (!type) continue;
+
+      // If this frequency needs reset
+      if (needsResetMap[type]) {
+        // If not completed, add to missed
+        if (!person.completed?.includes(chore.name)) {
+          missedChores.push(chore);
+        }
+      } else {
+        // Keep completed chores that don't need reset
+        if (person.completed?.includes(chore.name)) {
+          completedToKeep.push(chore.name);
+        }
+      }
+    }
+
+    // Update person's state
+    if (missedChores.length > 0) {
+      person.dollarsOwed = (person.dollarsOwed || 0) + missedChores.length;
+      person.paid = false;
+
+      logActivity({
+        type: "missedChores",
+        person: person.name,
+        amount: missedChores.length,
+        chores: missedChores.map(c => c.name)
+      });
+    }
+
+    // Update completed list
+    person.completed = completedToKeep;
+  }
+
+  // Handle resets based on frequency
+  if (needsResetMap.daily) {
+    console.log("🔁 Daily reset: rotating daily chores");
+    reassignRotatingChores();
     updates.daily = nowISO;
   }
-  
 
-  // ---------------- Weekly Reset ----------------
-  const lastWeekly = existing.weekly ? new Date(existing.weekly).toDateString() : null;
-  const isSunday = now.getDay() === 0;
-
-  if (isSunday && lastWeekly !== today) {
-    console.log("🔁 Weekly reset: reassigning chores and clearing completions");
-
+  if (needsResetMap.weekly) {
+    console.log("🔁 Weekly reset: reassigning all rotating chores");
     reassignRotatingChores();
     assignAllChores();
-
-    people.forEach(p => {
-      p.completed = [];
-      p.paid = true;
-      p.dollarsOwed = 0;
-    });
-
     updates.weekly = nowISO;
+  }
+
+  if (needsResetMap.biweekly) {
+    console.log("🔁 Biweekly reset: reassigning biweekly chores");
+    reassignRotatingChores();
     updates.biweekly = nowISO;
+  }
+
+  if (needsResetMap.monthly) {
+    console.log("🔁 Monthly reset: reassigning monthly chores");
+    reassignRotatingChores();
     updates.monthly = nowISO;
+  }
+
+  if (needsResetMap.quarterly) {
+    console.log("🔁 Quarterly reset: reassigning quarterly chores");
+    reassignRotatingChores();
     updates.quarterly = nowISO;
   }
 
-  // ---------------- Save if Anything Changed ----------------
+  // Save changes
   if (Object.keys(updates).length > 0) {
     await window.setDoc(docRef, { ...existing, ...updates }, { merge: true });
     savePeople();
     debouncedFirebaseSave();
+    renderDashboard();
+    updateLastUpdatedText();
     showCustomAlert("🔁 Chores updated via scheduled reset.");
   }
 }
@@ -1731,75 +1790,6 @@ function assignRotatingChores() {
   assignAllChores();
 }
 
-// ------------------- Function: autoResetChoresIfNeeded -------------------
-// Poll loop: Checks if a chore type is due for reset
-function autoResetChoresIfNeeded(forDate = new Date()) {
-  const lastReset = JSON.parse(localStorage.getItem("lastChoreReset") || "{}");
-  const resetSummary = [];
-  let didReset = false;
-  const missed = [];
-
-  people.forEach(person => {
-    if (!Array.isArray(person.completed)) return;
-
-    const originalCount = person.completed.length;
-    const newCompleted = person.completed.filter(task => {
-      const allChores = person.chores || [];
-      const matched = allChores.find(c => c.name === task || c.task === task);
-      const type = matched?.type?.toLowerCase();
-      if (!matched || !type) return true;
-      return !shouldReset(type, lastReset[type]);
-    });
-
-    const removedCount = originalCount - newCompleted.length;
-
-    if (removedCount > 0) {
-      person.completed = newCompleted;
-      didReset = true;
-      resetSummary.push(`🔁 ${person.name}: ${removedCount} chore(s) reset`);
-    }
-
-    // NEW: Track missed chores if type is due today
-    const missedToday = (person.chores || []).filter(chore => {
-      const type = chore.type?.toLowerCase();
-      return shouldReset(type, lastReset[type]) && !person.completed.includes(chore.name);
-    });
-
-    if (missedToday.length > 0) {
-      person.dollarsOwed = (person.dollarsOwed || 0) + missedToday.length;
-      person.paid = false;
-
-      missed.push({ person: person.name, amount: missedToday.length });
-
-      logActivity({
-        type: "missedChores",
-        person: person.name,
-        amount: missedToday.length
-      });
-    }
-  });
-
-  if (didReset || missed.length > 0) {
-    const todayStr = forDate.toDateString();
-    ["daily", "weekly", "biweekly", "monthly", "quarterly"].forEach(type => {
-      if (shouldReset(type, lastReset[type])) {
-        lastReset[type] = todayStr;
-      }
-    });
-
-    localStorage.setItem("lastChoreReset", JSON.stringify(lastReset));
-    savePeople();
-    debouncedFirebaseSave();
-  }
-
-  // NEW: Rotate chores only if daily reset occurred
-  if (shouldReset("daily", lastReset["daily"])) {
-    reassignRotatingChores();
-  }
-
-  return resetSummary;
-}
-
 // ------------------- Function: toggleAutoReset -------------------
 // Toggles localStorage flag to disable auto reset logic
 function toggleAutoReset() {
@@ -1814,7 +1804,6 @@ function toggleAutoReset() {
 
 window.applyDollarAdjustment     = applyDollarAdjustment;
 window.applySkipChore            = applySkipChore;
-window.autoResetChoresIfNeeded   = autoResetChoresIfNeeded;
 window.closeModal                = closeModal;
 window.completeChore             = completeChore;
 window.confirmDollarAdjustment   = confirmDollarAdjustment;
