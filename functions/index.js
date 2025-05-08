@@ -297,6 +297,7 @@ exports.scheduledChoreReset = functions.pubsub.schedule('0 0 * * *')
   });
 
 // Function to send morning SMS to all people
+// Test deployment - May 8, 2024 - Force redeploy
 exports.sendMorningSMS = functions.pubsub.schedule('0 8 * * *')
   .timeZone('America/New_York')
   .onRun(async (context) => {
@@ -321,10 +322,11 @@ exports.sendMorningSMS = functions.pubsub.schedule('0 8 * * *')
       const metaDoc = await metaRef.get();
       const todayStr = new Date().toISOString().split('T')[0];
       
-      if (metaDoc.exists && metaDoc.data().date === todayStr) {
-        console.log("📪 Morning SMS already sent today");
-        return null;
-      }
+      // Temporarily comment out the check for testing
+      // if (metaDoc.exists && metaDoc.data().date === todayStr) {
+      //   console.log("📪 Morning SMS already sent today");
+      //   return null;
+      // }
 
       // Send SMS to each person
       for (const person of people) {
@@ -409,5 +411,6 @@ const carrierGateways = {
   "Verizon": "@vtext.com",
   "AT&T": "@txt.att.net",
   "T-Mobile": "@tmomail.net",
-  "Sprint": "@messaging.sprintpcs.com"
+  "Sprint": "@messaging.sprintpcs.com",
+  "Google Fi": "@msg.fi.google.com"
 }; 
