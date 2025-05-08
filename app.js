@@ -1203,8 +1203,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   // 🔁 Auto-reset logic (Firebase-based)
   await initializeResetTimestamps();        // ✅ Ensure meta.lastReset structure exists
-  await autoResetIfNeeded();                // ✅ Perform needed resets on load
-  setInterval(autoResetIfNeeded, 60 * 1000); // 🕓 Re-check every minute
+  await autoResetIfNeeded();                // ✅ Check and perform resets if needed
 });
 
 
@@ -1245,9 +1244,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
 
     choreData = data.chores;
-
     renderDashboard();
-    await autoResetIfNeeded(); // ✅ Use new reset function
 
   } catch (err) {
     console.error("[app.js]: ❌ Failed to load chore data", err);
@@ -1356,6 +1353,7 @@ async function autoResetIfNeeded() {
 
   // If nothing needs reset, return early
   if (!Object.values(needsResetMap).some(Boolean)) {
+    console.log("✅ No resets needed");
     return;
   }
 
@@ -1388,12 +1386,17 @@ async function autoResetIfNeeded() {
       person.dollarsOwed = (person.dollarsOwed || 0) + missedChores.length;
       person.paid = false;
 
-      logActivity({
-        type: "missedChores",
-        person: person.name,
-        amount: missedChores.length,
-        chores: missedChores.map(c => c.name)
-      });
+      try {
+        await logActivity('myHouseholdId', {
+          type: "missedChores",
+          person: person.name,
+          amount: missedChores.length,
+          chores: missedChores.map(c => c.name)
+        });
+      } catch (err) {
+        console.error("❌ Failed to log missed chores:", err);
+        // Continue execution even if logging fails
+      }
     }
 
     // Update completed list
@@ -1401,47 +1404,56 @@ async function autoResetIfNeeded() {
   }
 
   // Handle resets based on frequency
-  if (needsResetMap.daily) {
-    console.log("🔁 Daily reset: rotating daily chores");
-    reassignRotatingChores();
-    updates.daily = nowISO;
+  if (needsResetMap.daily || needsResetMap.weekly || needsResetMap.biweekly || 
+      needsResetMap.monthly || needsResetMap.quarterly) {
+    console.log("🔁 Reassigning rotating chores");
+    const updatedPeople = await reassignRotatingChores(people, choreData.rotating || []);
+    people = updatedPeople;
   }
 
-  if (needsResetMap.weekly) {
-    console.log("🔁 Weekly reset: reassigning all rotating chores");
-    reassignRotatingChores();
-    assignAllChores();
-    updates.weekly = nowISO;
-  }
+  // Update timestamps
+  frequencies.forEach(freq => {
+    if (needsResetMap[freq]) {
+      updates[freq] = nowISO;
+    }
+  });
 
-  if (needsResetMap.biweekly) {
-    console.log("🔁 Biweekly reset: reassigning biweekly chores");
-    reassignRotatingChores();
-    updates.biweekly = nowISO;
-  }
-
-  if (needsResetMap.monthly) {
-    console.log("🔁 Monthly reset: reassigning monthly chores");
-    reassignRotatingChores();
-    updates.monthly = nowISO;
-  }
-
-  if (needsResetMap.quarterly) {
-    console.log("🔁 Quarterly reset: reassigning quarterly chores");
-    reassignRotatingChores();
-    updates.quarterly = nowISO;
-  }
-
-  // Save changes
-  if (Object.keys(updates).length > 0) {
-    await window.setDoc(docRef, { ...existing, ...updates }, { merge: true });
-    savePeople();
-    debouncedFirebaseSave();
-    renderDashboard();
-    updateLastUpdatedText();
-    showCustomAlert("🔁 Chores updated via scheduled reset.");
+  // Save all changes
+  const batch = window.writeBatch(window.db);
+  
+  // Update household data
+  batch.update(window.doc(window.db, "households", "myHouseholdId"), { people });
+  
+  // Update reset timestamps
+  batch.set(window.doc(window.db, "meta", "lastReset"), { ...existing, ...updates }, { merge: true });
+  
+  try {
+    await batch.commit();
+    console.log("✅ Reset completed successfully");
+    
+    // Reload data after successful reset
+    await autoResetIfNeeded();
+  } catch (err) {
+    console.error("❌ Failed to save changes:", err);
+    throw err;
   }
 }
+
+// Add auto-reset check to page load
+document.addEventListener("DOMContentLoaded", async () => {
+  // ... existing code ...
+
+  // 🔁 Auto-reset logic (Firebase-based)
+  await initializeResetTimestamps();        // ✅ Ensure meta.lastReset structure exists
+  await autoResetIfNeeded();                // ✅ Check and perform resets if needed
+});
+
+// Add auto-reset check to page visibility change
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "visible") {
+    await autoResetIfNeeded();
+  }
+});
 
 
 // ============================================================================
@@ -1862,3 +1874,194 @@ function updateLastUpdatedText() {
 
   el.textContent = `Last updated: ${formatted}`;
 }
+
+// Add loading state management
+let isLoading = false;
+let lastLoadTime = 0;
+const LOAD_COOLDOWN = 2000; // 2 seconds cooldown between loads
+
+// Helper to check if we should load data
+const shouldLoadData = () => {
+  const now = Date.now();
+  if (isLoading || (now - lastLoadTime) < LOAD_COOLDOWN) {
+    return false;
+  }
+  isLoading = true;
+  lastLoadTime = now;
+  return true;
+};
+
+// Helper to finish loading
+const finishLoading = () => {
+  isLoading = false;
+};
+
+// Update loadHouseholdData with better error handling and race prevention
+async function loadHouseholdData() {
+  if (!shouldLoadData()) {
+    console.log("⏳ Skipping load - too soon or already loading");
+    return;
+  }
+
+  try {
+    const householdRef = window.db.collection('households').doc('myHouseholdId');
+    const doc = await householdRef.get();
+    
+    if (!doc.exists) {
+      console.error("❌ Household not found");
+      finishLoading();
+      return;
+    }
+
+    const data = doc.data();
+    if (!data) {
+      console.error("❌ No data in household document");
+      finishLoading();
+      return;
+    }
+
+    // Update UI with new data
+    try {
+      updateUI(data);
+    } catch (err) {
+      console.error("❌ Error updating UI:", err);
+      // Continue execution even if UI update fails
+    }
+
+    // Check for resets
+    try {
+      await autoResetIfNeeded(data);
+    } catch (err) {
+      console.error("❌ Error during auto reset:", err);
+      // Continue execution even if reset fails
+    }
+
+  } catch (error) {
+    console.error("❌ Error loading household data:", error);
+  } finally {
+    finishLoading();
+  }
+}
+
+// Update autoResetIfNeeded with better error handling
+async function autoResetIfNeeded(data) {
+  if (!data) return;
+
+  try {
+    const metaRef = window.db.collection('meta').doc('lastReset');
+    const metaDoc = await metaRef.get();
+    const existing = metaDoc.exists ? metaDoc.data() : {};
+    const now = new Date();
+    const nowISO = now.toISOString();
+    const updates = {};
+
+    // Track which frequencies need reset
+    const frequencies = ["daily", "weekly", "biweekly", "monthly", "quarterly"];
+    const needsResetMap = {};
+    frequencies.forEach(freq => {
+      needsResetMap[freq] = shouldReset(freq, existing[freq]);
+    });
+
+    // If nothing needs reset, return early
+    if (!Object.values(needsResetMap).some(Boolean)) {
+      console.log("✅ No resets needed");
+      return;
+    }
+
+    // Process each person's chores
+    const people = data.people || [];
+    for (const person of people) {
+      const missedChores = [];
+      const completedToKeep = [];
+
+      // Check each chore
+      for (const chore of (person.chores || [])) {
+        const type = chore.type?.toLowerCase();
+        if (!type) continue;
+
+        // If this frequency needs reset
+        if (needsResetMap[type]) {
+          // If not completed, add to missed
+          if (!person.completed?.includes(chore.name)) {
+            missedChores.push(chore);
+          }
+        } else {
+          // Keep completed chores that don't need reset
+          if (person.completed?.includes(chore.name)) {
+            completedToKeep.push(chore.name);
+          }
+        }
+      }
+
+      // Update person's state
+      if (missedChores.length > 0) {
+        person.dollarsOwed = (person.dollarsOwed || 0) + missedChores.length;
+        person.paid = false;
+
+        try {
+          await logActivity('myHouseholdId', {
+            type: "missedChores",
+            person: person.name,
+            amount: missedChores.length,
+            chores: missedChores.map(c => c.name)
+          });
+        } catch (err) {
+          console.error("❌ Failed to log missed chores:", err);
+          // Continue execution even if logging fails
+        }
+      }
+
+      // Update completed list
+      person.completed = completedToKeep;
+    }
+
+    // Handle resets based on frequency
+    if (needsResetMap.daily || needsResetMap.weekly || needsResetMap.biweekly || 
+        needsResetMap.monthly || needsResetMap.quarterly) {
+      console.log("🔁 Reassigning rotating chores");
+      const updatedPeople = await reassignRotatingChores(people, choreData.rotating || []);
+      data.people = updatedPeople;
+    }
+
+    // Update timestamps
+    frequencies.forEach(freq => {
+      if (needsResetMap[freq]) {
+        updates[freq] = nowISO;
+      }
+    });
+
+    // Save all changes
+    const batch = window.writeBatch(window.db);
+    
+    // Update household data
+    batch.update(window.doc(window.db, "households", "myHouseholdId"), { people: data.people });
+    
+    // Update reset timestamps
+    batch.set(window.doc(window.db, "meta", "lastReset"), { ...existing, ...updates }, { merge: true });
+    
+    try {
+      await batch.commit();
+      console.log("✅ Reset completed successfully");
+      
+      // Reload data after successful reset
+      await loadHouseholdData();
+    } catch (err) {
+      console.error("❌ Failed to save changes:", err);
+      throw err;
+    }
+
+  } catch (error) {
+    console.error("❌ Error during reset:", error);
+    throw error;
+  }
+}
+
+// Add event listeners for page visibility
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    loadHouseholdData();
+  }
+});
+
+// Add event listener for page load
+window.addEventListener('load', loadHouseholdData);
