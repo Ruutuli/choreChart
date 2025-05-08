@@ -1314,6 +1314,19 @@ async function autoResetIfNeeded(data) {
   if (!data) {
     // If no data provided, try to load it
     try {
+      // Wait for Firebase to be ready
+      if (!isFirebaseReady()) {
+        console.log("⏳ Waiting for Firebase to initialize...");
+        await new Promise(resolve => {
+          const checkInterval = setInterval(() => {
+            if (isFirebaseReady()) {
+              clearInterval(checkInterval);
+              resolve();
+            }
+          }, 100);
+        });
+      }
+
       const householdRef = window.db.collection('households').doc('myHouseholdId');
       const doc = await householdRef.get();
       if (!doc.exists) {
@@ -1893,11 +1906,29 @@ const finishLoading = () => {
   isLoading = false;
 };
 
-// Update loadHouseholdData with better error handling and race prevention
+// Add a function to check if Firebase is ready
+function isFirebaseReady() {
+  return window.db && typeof window.db.collection === 'function';
+}
+
+// Update loadHouseholdData to check for Firebase readiness
 async function loadHouseholdData() {
   if (!shouldLoadData()) {
     console.log("⏳ Skipping load - too soon or already loading");
     return;
+  }
+
+  // Wait for Firebase to be ready
+  if (!isFirebaseReady()) {
+    console.log("⏳ Waiting for Firebase to initialize...");
+    await new Promise(resolve => {
+      const checkInterval = setInterval(() => {
+        if (isFirebaseReady()) {
+          clearInterval(checkInterval);
+          resolve();
+        }
+      }, 100);
+    });
   }
 
   try {
@@ -1937,119 +1968,6 @@ async function loadHouseholdData() {
     console.error("❌ Error loading household data:", error);
   } finally {
     finishLoading();
-  }
-}
-
-// Update autoResetIfNeeded with better error handling
-async function autoResetIfNeeded(data) {
-  if (!data) return;
-
-  try {
-    const metaRef = window.db.collection('meta').doc('lastReset');
-    const metaDoc = await metaRef.get();
-    const existing = metaDoc.exists ? metaDoc.data() : {};
-    const now = new Date();
-    const nowISO = now.toISOString();
-    const updates = {};
-
-    // Track which frequencies need reset
-    const frequencies = ["daily", "weekly", "biweekly", "monthly", "quarterly"];
-    const needsResetMap = {};
-    frequencies.forEach(freq => {
-      needsResetMap[freq] = shouldReset(freq, existing[freq]);
-    });
-
-    // If nothing needs reset, return early
-    if (!Object.values(needsResetMap).some(Boolean)) {
-      console.log("✅ No resets needed");
-      return;
-    }
-
-    // Process each person's chores
-    const people = data.people || [];
-    for (const person of people) {
-      const missedChores = [];
-      const completedToKeep = [];
-
-      // Check each chore
-      for (const chore of (person.chores || [])) {
-        const type = chore.type?.toLowerCase();
-        if (!type) continue;
-
-        // If this frequency needs reset
-        if (needsResetMap[type]) {
-          // If not completed, add to missed
-          if (!person.completed?.includes(chore.name)) {
-            missedChores.push(chore);
-          }
-        } else {
-          // Keep completed chores that don't need reset
-          if (person.completed?.includes(chore.name)) {
-            completedToKeep.push(chore.name);
-          }
-        }
-      }
-
-      // Update person's state
-      if (missedChores.length > 0) {
-        person.dollarsOwed = (person.dollarsOwed || 0) + missedChores.length;
-        person.paid = false;
-
-        try {
-          await logActivity('myHouseholdId', {
-            type: "missedChores",
-            person: person.name,
-            amount: missedChores.length,
-            chores: missedChores.map(c => c.name)
-          });
-        } catch (err) {
-          console.error("❌ Failed to log missed chores:", err);
-          // Continue execution even if logging fails
-        }
-      }
-
-      // Update completed list
-      person.completed = completedToKeep;
-    }
-
-    // Handle resets based on frequency
-    if (needsResetMap.daily || needsResetMap.weekly || needsResetMap.biweekly || 
-        needsResetMap.monthly || needsResetMap.quarterly) {
-      console.log("🔁 Reassigning rotating chores");
-      const updatedPeople = await reassignRotatingChores(people, choreData.rotating || []);
-      data.people = updatedPeople;
-    }
-
-    // Update timestamps
-    frequencies.forEach(freq => {
-      if (needsResetMap[freq]) {
-        updates[freq] = nowISO;
-      }
-    });
-
-    // Save all changes
-    const batch = window.writeBatch(window.db);
-    
-    // Update household data
-    batch.update(window.doc(window.db, "households", "myHouseholdId"), { people: data.people });
-    
-    // Update reset timestamps
-    batch.set(window.doc(window.db, "meta", "lastReset"), { ...existing, ...updates }, { merge: true });
-    
-    try {
-      await batch.commit();
-      console.log("✅ Reset completed successfully");
-      
-      // Reload data after successful reset
-      await loadHouseholdData();
-    } catch (err) {
-      console.error("❌ Failed to save changes:", err);
-      throw err;
-    }
-
-  } catch (error) {
-    console.error("❌ Error during reset:", error);
-    throw error;
   }
 }
 
