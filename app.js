@@ -1128,18 +1128,24 @@ let choreData = {};
 
 // ------------------- Sandbox Mode -------------------
 let isSandboxMode = false;
-getSettings().then(settings => {
-  isSandboxMode = settings.sandboxMode || false;
-});
 
-// ------------------- DOM Ready Bootstrapping -------------------
-document.addEventListener("DOMContentLoaded", async () => {
-  const banner = document.getElementById("sandboxBanner");
-  const checkbox = document.getElementById("sandboxToggle");
-  const autoResetToggle = document.getElementById("disableAutoResetToggle");
+// ------------------- Function: handleError -------------------
+const handleError = (error, context, showAlert = true) => {
+  console.error(`❌ Error in ${context}:`, error);
+  if (showAlert) {
+    showCustomAlert(`❌ Error: ${error.message || 'Something went wrong'}`);
+  }
+};
 
+// ------------------- Function: initializeApp -------------------
+async function initializeApp() {
   try {
     const settings = await getSettings();
+    isSandboxMode = settings.sandboxMode || false;
+    
+    const banner = document.getElementById("sandboxBanner");
+    const checkbox = document.getElementById("sandboxToggle");
+    const autoResetToggle = document.getElementById("disableAutoResetToggle");
     
     // Update sandbox mode UI
     if (settings.sandboxMode && banner) {
@@ -1159,9 +1165,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     await initializeResetTimestamps();
     await autoResetIfNeeded();
   } catch (error) {
-    handleError(error, "Loading settings");
+    handleError(error, "Initializing app");
   }
-});
+}
+
+// ------------------- DOM Ready Bootstrapping -------------------
+document.addEventListener("DOMContentLoaded", initializeApp);
 
 
 // ------------------- Function: Init Async Loader -------------------
@@ -1890,14 +1899,6 @@ const initializeFirebase = async () => {
   }
 };
 
-// Add centralized error handling
-const handleError = (error, context, showAlert = true) => {
-  console.error(`❌ Error in ${context}:`, error);
-  if (showAlert) {
-    showCustomAlert(`⚠️ ${context} failed. Please try again.`);
-  }
-};
-
 // Add retry mechanism for Firebase operations
 const withRetry = async (operation, maxRetries = 3) => {
   let lastError;
@@ -2043,7 +2044,7 @@ async function getSettings() {
     const doc = await settingsRef.get();
     return doc.exists ? doc.data() : {};
   } catch (error) {
-    handleError(error, "Loading settings", false);
+    handleError(error, "Loading settings");
     return {};
   }
 }

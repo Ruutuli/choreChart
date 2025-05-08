@@ -1,8 +1,12 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
+const emailjs = require('@emailjs/browser');
 
 // Initialize Firebase Admin
 admin.initializeApp();
+
+// Initialize EmailJS
+emailjs.init("YOUR_PUBLIC_KEY"); // Replace with your EmailJS public key
 
 // Helper to check if a frequency needs reset
 const needsReset = (frequency, lastReset) => {
@@ -287,4 +291,120 @@ exports.scheduledChoreReset = functions.pubsub.schedule('0 0 * * *')
       console.error("❌ Error during reset:", error);
       throw error;
     }
-  }); 
+  });
+
+// Function to send morning SMS to all people
+exports.sendMorningSMS = functions.pubsub.schedule('0 8 * * *')
+  .timeZone('America/New_York')
+  .onRun(async (context) => {
+    const householdId = "myHouseholdId";
+    const db = admin.firestore();
+
+    try {
+      // Get household data
+      const householdRef = db.collection('households').doc(householdId);
+      const householdDoc = await householdRef.get();
+      
+      if (!householdDoc.exists) {
+        console.log("❌ Household not found:", householdId);
+        return null;
+      }
+
+      const data = householdDoc.data();
+      const people = data.people || [];
+
+      // Check if SMS was already sent today
+      const metaRef = db.collection('meta').doc('lastSMS');
+      const metaDoc = await metaRef.get();
+      const todayStr = new Date().toISOString().split('T')[0];
+      
+      if (metaDoc.exists && metaDoc.data().date === todayStr) {
+        console.log("📪 Morning SMS already sent today");
+        return null;
+      }
+
+      // Send SMS to each person
+      for (const person of people) {
+        const todayChores = (person.chores || []).filter(c => {
+          const t = c.type?.toLowerCase();
+          return ["daily", "weekly", "biweekly"].includes(t);
+        });
+
+        if (todayChores.length === 0) continue;
+
+        const formattedList = todayChores.map(c => `• ${c.name} (${c.type})`).join("\n");
+        const rawNumber = person.phone ?? "";
+        const rawCarrier = person.carrier ?? "";
+        const number = rawNumber.replace(/\D/g, "");
+        const carrierSuffix = carrierGateways[rawCarrier];
+
+        if (!number || !carrierSuffix) {
+          console.warn(`📵 Skipping SMS: missing number or carrier for ${person.name}`);
+          continue;
+        }
+
+        const to_email = `${number}${carrierSuffix}`;
+        const freqSet = new Set(todayChores.map(c => c.type?.toLowerCase()));
+        const frequency = freqSet.size === 1
+          ? Array.from(freqSet)[0]?.replace(/^\w/, l => l.toUpperCase())
+          : "Mixed";
+
+        const date_range = getDateRange(frequency);
+
+        try {
+          await emailjs.send("service_v8ndidp", "template_53xar2k", {
+            to_email,
+            name: person.name,
+            chore_list: formattedList,
+            dollars: person.dollarsOwed || 0,
+            frequency,
+            date_range,
+            site_url: "https://ruutuli.github.io/choreChart/"
+          });
+          console.log(`✅ SMS sent to ${person.name}`);
+        } catch (err) {
+          console.error(`❌ Failed to send SMS to ${person.name}`, err);
+        }
+      }
+
+      // Update last SMS timestamp
+      await metaRef.set({ date: todayStr });
+      console.log(`✅ SMS sent logged in Firestore as ${todayStr}`);
+
+      return null;
+    } catch (error) {
+      console.error("❌ Error in sendMorningSMS:", error);
+      return null;
+    }
+  });
+
+// Helper function to get date range for SMS
+function getDateRange(frequency) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  if (frequency === "Daily") {
+    return formatDate(today);
+  }
+
+  const start = new Date(today);
+  start.setDate(today.getDate() - today.getDay());
+
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+
+  return `${formatDate(start)} – ${formatDate(end)}`;
+}
+
+// Helper function to format date
+function formatDate(date) {
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+// Carrier gateways for SMS
+const carrierGateways = {
+  "Verizon": "@vtext.com",
+  "AT&T": "@txt.att.net",
+  "T-Mobile": "@tmomail.net",
+  "Sprint": "@messaging.sprintpcs.com"
+}; 
