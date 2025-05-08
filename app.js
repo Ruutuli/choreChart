@@ -144,75 +144,6 @@ window.addEventListener("load", triggerDailySMS);
 // Handles saving to local storage and syncing to Firebase
 // ============================================================================
 
-// ------------------- Function: savePeople -------------------
-// Saves people array to localStorage
-async function savePeople() {
-  if (isSandboxMode) {
-    console.warn("[Sandbox Mode]: Prevented savePeople");
-    return;
-  }
-
-  try {
-    if (!await initializeFirebase()) {
-      return;
-    }
-
-    await withRetry(async () => {
-      if (typeof window.saveChoreData === "function") {
-        await window.saveChoreData("myHouseholdId", { people });
-        console.log("✅ Data saved successfully");
-        updateLastUpdatedText();
-        showCustomAlert("✅ Changes saved");
-      } else {
-        throw new Error("Firebase save function not available");
-      }
-    });
-  } catch (error) {
-    handleError(error, "Saving data");
-  }
-}
-
-// ------------------- Function: logActivity (Firestore Version) -------------------
-async function logActivity(entry, householdId = "default") {
-  if (isSandboxMode) {
-    console.warn("[Sandbox Mode]: Prevented logActivity");
-    return;
-  }
-
-  try {
-    if (!await initializeFirebase()) {
-      return;
-    }
-
-    // Ensure time is present
-    if (!entry.time && !entry.date) {
-      entry.time = new Date().toISOString();
-    }
-
-    await withRetry(async () => {
-      const logRef = window.doc(window.db, "households", householdId, "logs", crypto.randomUUID());
-      await window.setDoc(logRef, entry);
-      console.log("📝 Logged to Firestore:", entry);
-
-      // Update local logs
-      if (!Array.isArray(window._localLogs)) {
-        window._localLogs = [];
-      }
-      window._localLogs.unshift(entry);
-
-      // Re-render history if needed
-      const historyPanel = document.getElementById("history");
-      if (historyPanel && !historyPanel.classList.contains("hidden") && typeof renderHistory === "function") {
-        renderHistory(window._localLogs);
-      }
-    });
-  } catch (error) {
-    handleError(error, "Logging activity", false);
-  }
-}
-
-
-
 // ------------------- Function: debouncedFirebaseSave -------------------
 // Saves data to Firebase with debounce delay
 let saveTimeout = null;
@@ -262,9 +193,9 @@ const isBiweeklyWeek = () => {
 
 // ------------------- Function: updateChoreCycleStartDate -------------------
 // Updates stored chore cycle start for weekly tracking
-const updateChoreCycleStartDate = () => {
+const updateChoreCycleStartDate = async () => {
   const currentStart = getStartOfWeek();
-  localStorage.setItem("choreStart", currentStart);
+  await saveSettings({ choreStart: currentStart });
 };
 
 // ------------------- Firebase Helper: Ensure Reset Timestamps Exist -------------------
@@ -928,9 +859,9 @@ const openWeeklySummaryModal = async () => {
 
 // ------------------- Function: toggleSandboxMode -------------------
 // Toggles mock data mode for safe testing
-const toggleSandboxMode = () => {
+const toggleSandboxMode = async () => {
   const isEnabled = document.getElementById("sandboxToggle").checked;
-  localStorage.setItem("sandboxMode", isEnabled ? "true" : "false");
+  await saveSettings({ sandboxMode: isEnabled });
 
   logActivity({
     type: "sandbox",
@@ -1196,29 +1127,40 @@ let savedPeople = [];
 let choreData = {};
 
 // ------------------- Sandbox Mode -------------------
-const isSandboxMode = localStorage.getItem("sandboxMode") === "true";
+let isSandboxMode = false;
+getSettings().then(settings => {
+  isSandboxMode = settings.sandboxMode || false;
+});
 
 // ------------------- DOM Ready Bootstrapping -------------------
 document.addEventListener("DOMContentLoaded", async () => {
   const banner = document.getElementById("sandboxBanner");
   const checkbox = document.getElementById("sandboxToggle");
+  const autoResetToggle = document.getElementById("disableAutoResetToggle");
 
-  if (isSandboxMode && banner) {
-    banner.classList.remove("hidden");
+  try {
+    const settings = await getSettings();
+    
+    // Update sandbox mode UI
+    if (settings.sandboxMode && banner) {
+      banner.classList.remove("hidden");
+    }
+    if (checkbox) {
+      checkbox.checked = settings.sandboxMode || false;
+    }
+
+    // Update auto reset toggle
+    if (autoResetToggle) {
+      autoResetToggle.checked = settings.autoResetDisabled || false;
+    }
+
+    populateAdminDropdowns();
+    updateLastUpdatedText();
+    await initializeResetTimestamps();
+    await autoResetIfNeeded();
+  } catch (error) {
+    handleError(error, "Loading settings");
   }
-
-  if (checkbox) {
-    checkbox.checked = isSandboxMode;
-  }
-
-  populateAdminDropdowns();
-
-  // 🕒 Set initial last updated timestamp
-  updateLastUpdatedText();
-
-  // 🔁 Auto-reset logic (Firebase-based)
-  await initializeResetTimestamps();        // ✅ Ensure meta.lastReset structure exists
-  await autoResetIfNeeded();                // ✅ Check and perform resets if needed
 });
 
 
@@ -1829,10 +1771,10 @@ function assignRotatingChores() {
 
 // ------------------- Function: toggleAutoReset -------------------
 // Toggles localStorage flag to disable auto reset logic
-function toggleAutoReset() {
+const toggleAutoReset = async () => {
   const isDisabled = document.getElementById("disableAutoResetToggle").checked;
-  localStorage.setItem("autoResetDisabled", isDisabled ? "true" : "false");
-}
+  await saveSettings({ autoResetDisabled: isDisabled });
+};
 
 // ============================================================================
 // ------------------- Window Bindings -------------------
@@ -2084,5 +2026,40 @@ async function logActivity(entry, householdId = "default") {
     });
   } catch (error) {
     handleError(error, "Logging activity", false);
+  }
+}
+
+// Add Firebase settings management
+const SETTINGS_DOC = 'settings';
+
+// Helper to get settings from Firebase
+async function getSettings() {
+  try {
+    if (!await initializeFirebase()) {
+      return {};
+    }
+
+    const settingsRef = window.doc(window.db, "meta", SETTINGS_DOC);
+    const doc = await settingsRef.get();
+    return doc.exists ? doc.data() : {};
+  } catch (error) {
+    handleError(error, "Loading settings", false);
+    return {};
+  }
+}
+
+// Helper to save settings to Firebase
+async function saveSettings(settings) {
+  try {
+    if (!await initializeFirebase()) {
+      return;
+    }
+
+    await withRetry(async () => {
+      const settingsRef = window.doc(window.db, "meta", SETTINGS_DOC);
+      await window.setDoc(settingsRef, settings, { merge: true });
+    });
+  } catch (error) {
+    handleError(error, "Saving settings");
   }
 }
