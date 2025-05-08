@@ -538,14 +538,13 @@ button:disabled {
   font-size: 0.8rem;
   border-radius: 0.5rem;
   margin: 1rem auto 0.5rem auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.6rem;
-
+  display: block;
+  text-align: center;
   background-color: #999;
   border: none;
   box-sizing: border-box;
   list-style: none;
+  width: 100%;
 }
 
 /* ------------------- Week Banner ------------------- */

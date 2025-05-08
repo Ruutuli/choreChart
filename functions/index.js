@@ -50,7 +50,7 @@ const logActivity = async (householdId, entry, retries = 3) => {
 
 // Helper to reassign rotating chores
 const reassignRotatingChores = async (people, choreData) => {
-  if (!Array.isArray(choreData.rotating)) return people;
+  if (!Array.isArray(choreData.rotating)) return { updatedPeople: people, updatedRotating: [] };
 
   const peopleIds = people.map(p => p.id);
   const grouped = {
@@ -124,7 +124,7 @@ const reassignRotatingChores = async (people, choreData) => {
   }
 
   // Update people with new chores
-  return people.map(person => ({
+  const updatedPeople = people.map(person => ({
     ...person,
     chores: [
       ...(person.chores || []).filter(c => c.origin === "permanent"),
@@ -134,6 +134,11 @@ const reassignRotatingChores = async (people, choreData) => {
       }))
     ]
   }));
+
+  // Create updated rotating chores list
+  const updatedRotating = Object.values(assigned).flat();
+
+  return { updatedPeople, updatedRotating };
 };
 
 // Helper to execute batch with retry
@@ -242,7 +247,9 @@ exports.scheduledChoreReset = functions.pubsub.schedule('0 0 * * *')
       if (needsResetMap.daily || needsResetMap.weekly || needsResetMap.biweekly || 
           needsResetMap.monthly || needsResetMap.quarterly) {
         console.log("🔁 Reassigning rotating chores");
-        people = await reassignRotatingChores(people, choreData);
+        const { updatedPeople, updatedRotating } = await reassignRotatingChores(people, choreData);
+        people = updatedPeople;
+        choreData.rotating = updatedRotating;
       }
 
       // Update timestamps
@@ -256,7 +263,13 @@ exports.scheduledChoreReset = functions.pubsub.schedule('0 0 * * *')
       const batch = db.batch();
       
       // Update household data
-      batch.update(householdRef, { people });
+      batch.update(householdRef, { 
+        people,
+        chores: {
+          ...choreData,
+          rotating: choreData.rotating
+        }
+      });
       
       // Update reset timestamps
       batch.set(metaRef, { ...existing, ...updates }, { merge: true });
