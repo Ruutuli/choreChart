@@ -146,16 +146,29 @@ window.addEventListener("load", triggerDailySMS);
 
 // ------------------- Function: savePeople -------------------
 // Saves people array to localStorage
-function savePeople() {
+async function savePeople() {
   if (isSandboxMode) {
     console.warn("[Sandbox Mode]: Prevented savePeople");
     return;
   }
 
-  if (typeof window.saveChoreData === "function") {
-    return window.saveChoreData("myHouseholdId", { people });
-  } else {
-    console.warn("[savePeople]: ⚠️ Firebase save function not available.");
+  try {
+    if (!await initializeFirebase()) {
+      return;
+    }
+
+    await withRetry(async () => {
+      if (typeof window.saveChoreData === "function") {
+        await window.saveChoreData("myHouseholdId", { people });
+        console.log("✅ Data saved successfully");
+        updateLastUpdatedText();
+        showCustomAlert("✅ Changes saved");
+      } else {
+        throw new Error("Firebase save function not available");
+      }
+    });
+  } catch (error) {
+    handleError(error, "Saving data");
   }
 }
 
@@ -166,33 +179,35 @@ async function logActivity(entry, householdId = "default") {
     return;
   }
 
-  // Ensure time is present
-  if (!entry.time && !entry.date) {
-    entry.time = new Date().toISOString();
-  }
-
   try {
-    const logRef = window.doc(window.db, "households", householdId, "logs", crypto.randomUUID());
-    await window.setDoc(logRef, entry);
-    console.log("📝 Logged to Firestore:", entry);
-
-    // ------------------- Inject Log Into UI Memory -------------------
-    if (!Array.isArray(window._localLogs)) {
-      window._localLogs = [];
+    if (!await initializeFirebase()) {
+      return;
     }
 
-    window._localLogs.unshift(entry);
-    console.log("📌 Added to local logs:", entry);
-
-    // Only re-render if already viewing history
-    const historyPanel = document.getElementById("history");
-    if (historyPanel && !historyPanel.classList.contains("hidden") && typeof renderHistory === "function") {
-      console.log("🔁 Re-rendering history due to new log entry");
-      renderHistory(window._localLogs);
+    // Ensure time is present
+    if (!entry.time && !entry.date) {
+      entry.time = new Date().toISOString();
     }
 
-  } catch (err) {
-    console.error("❌ Failed to log activity:", err);
+    await withRetry(async () => {
+      const logRef = window.doc(window.db, "households", householdId, "logs", crypto.randomUUID());
+      await window.setDoc(logRef, entry);
+      console.log("📝 Logged to Firestore:", entry);
+
+      // Update local logs
+      if (!Array.isArray(window._localLogs)) {
+        window._localLogs = [];
+      }
+      window._localLogs.unshift(entry);
+
+      // Re-render history if needed
+      const historyPanel = document.getElementById("history");
+      if (historyPanel && !historyPanel.classList.contains("hidden") && typeof renderHistory === "function") {
+        renderHistory(window._localLogs);
+      }
+    });
+  } catch (error) {
+    handleError(error, "Logging activity", false);
   }
 }
 
@@ -1911,72 +1926,163 @@ function isFirebaseReady() {
   return window.db && typeof window.db.collection === 'function';
 }
 
-// Update loadHouseholdData to check for Firebase readiness
+// Add Firebase initialization helper
+const initializeFirebase = async () => {
+  try {
+    if (!isFirebaseReady()) {
+      console.log("⏳ Waiting for Firebase to initialize...");
+      await new Promise(resolve => {
+        const checkInterval = setInterval(() => {
+          if (isFirebaseReady()) {
+            clearInterval(checkInterval);
+            resolve();
+          }
+        }, 100);
+      });
+    }
+    return true;
+  } catch (error) {
+    console.error("❌ Firebase initialization failed:", error);
+    showCustomAlert("❌ Failed to initialize Firebase. Please refresh the page.");
+    return false;
+  }
+};
+
+// Add centralized error handling
+const handleError = (error, context, showAlert = true) => {
+  console.error(`❌ Error in ${context}:`, error);
+  if (showAlert) {
+    showCustomAlert(`⚠️ ${context} failed. Please try again.`);
+  }
+};
+
+// Add retry mechanism for Firebase operations
+const withRetry = async (operation, maxRetries = 3) => {
+  let lastError;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (i < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+      }
+    }
+  }
+  throw lastError;
+};
+
+// Update loadHouseholdData to use new helpers
 async function loadHouseholdData() {
   if (!shouldLoadData()) {
     console.log("⏳ Skipping load - too soon or already loading");
     return;
   }
 
-  // Wait for Firebase to be ready
-  if (!isFirebaseReady()) {
-    console.log("⏳ Waiting for Firebase to initialize...");
-    await new Promise(resolve => {
-      const checkInterval = setInterval(() => {
-        if (isFirebaseReady()) {
-          clearInterval(checkInterval);
-          resolve();
-        }
-      }, 100);
-    });
-  }
-
   try {
-    const householdRef = window.db.collection('households').doc('myHouseholdId');
-    const doc = await householdRef.get();
-    
-    if (!doc.exists) {
-      console.error("❌ Household not found");
-      finishLoading();
+    if (!await initializeFirebase()) {
       return;
     }
 
-    const data = doc.data();
-    if (!data) {
-      console.error("❌ No data in household document");
-      finishLoading();
-      return;
-    }
+    const data = await withRetry(async () => {
+      const householdRef = window.db.collection('households').doc('myHouseholdId');
+      const doc = await householdRef.get();
+      
+      if (!doc.exists) {
+        throw new Error("Household not found");
+      }
+
+      const data = doc.data();
+      if (!data) {
+        throw new Error("No data in household document");
+      }
+
+      return data;
+    });
 
     // Update UI with new data
     try {
       updateUI(data);
     } catch (err) {
-      console.error("❌ Error updating UI:", err);
-      // Continue execution even if UI update fails
+      handleError(err, "UI update", false);
     }
 
     // Check for resets
     try {
       await autoResetIfNeeded(data);
     } catch (err) {
-      console.error("❌ Error during auto reset:", err);
-      // Continue execution even if reset fails
+      handleError(err, "Auto reset", false);
     }
 
   } catch (error) {
-    console.error("❌ Error loading household data:", error);
+    handleError(error, "Loading household data");
   } finally {
     finishLoading();
   }
 }
 
-// Add event listeners for page visibility
-document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') {
-    loadHouseholdData();
+// Update savePeople to use new helpers
+async function savePeople() {
+  if (isSandboxMode) {
+    console.warn("[Sandbox Mode]: Prevented savePeople");
+    return;
   }
-});
 
-// Add event listener for page load
-window.addEventListener('load', loadHouseholdData);
+  try {
+    if (!await initializeFirebase()) {
+      return;
+    }
+
+    await withRetry(async () => {
+      if (typeof window.saveChoreData === "function") {
+        await window.saveChoreData("myHouseholdId", { people });
+        console.log("✅ Data saved successfully");
+        updateLastUpdatedText();
+        showCustomAlert("✅ Changes saved");
+      } else {
+        throw new Error("Firebase save function not available");
+      }
+    });
+  } catch (error) {
+    handleError(error, "Saving data");
+  }
+}
+
+// Update logActivity to use new helpers
+async function logActivity(entry, householdId = "default") {
+  if (isSandboxMode) {
+    console.warn("[Sandbox Mode]: Prevented logActivity");
+    return;
+  }
+
+  try {
+    if (!await initializeFirebase()) {
+      return;
+    }
+
+    // Ensure time is present
+    if (!entry.time && !entry.date) {
+      entry.time = new Date().toISOString();
+    }
+
+    await withRetry(async () => {
+      const logRef = window.doc(window.db, "households", householdId, "logs", crypto.randomUUID());
+      await window.setDoc(logRef, entry);
+      console.log("📝 Logged to Firestore:", entry);
+
+      // Update local logs
+      if (!Array.isArray(window._localLogs)) {
+        window._localLogs = [];
+      }
+      window._localLogs.unshift(entry);
+
+      // Re-render history if needed
+      const historyPanel = document.getElementById("history");
+      if (historyPanel && !historyPanel.classList.contains("hidden") && typeof renderHistory === "function") {
+        renderHistory(window._localLogs);
+      }
+    });
+  } catch (error) {
+    handleError(error, "Logging activity", false);
+  }
+}
