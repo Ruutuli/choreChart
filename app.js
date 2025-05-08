@@ -7,65 +7,6 @@
 // EmailJS config, SMS/email reminder logic, 8AM daily auto-text
 // ============================================================================
 
-// ------------------- Function: sendChoreEmail -------------------
-// Sends a chore summary email to the person
-function sendChoreEmail(person) {
-  const todayChores = (person.chores || []).filter(c => {
-    const t = c.type?.toLowerCase();
-    return ["daily", "weekly", "biweekly"].includes(t);
-  });
-
-  if (todayChores.length === 0) return;
-
-  const formattedList = todayChores.map(c => `• ${c.name} (${c.type})`).join("\n");
-
-  const freqSet = new Set(todayChores.map(c => c.type?.toLowerCase()));
-  const frequency = freqSet.size === 1
-    ? Array.from(freqSet)[0]?.replace(/^\w/, l => l.toUpperCase())
-    : "Mixed";
-
-  sendChoreSMS(person, formattedList, frequency);
-}
-
-// ------------------- Function: sendChoreSMS -------------------
-// Sends an SMS (via email gateway) containing chores
-function sendChoreSMS(person, message) {
-  const rawNumber = person.phone ?? "";
-  const rawCarrier = person.carrier ?? "";
-  const number = rawNumber.replace(/\D/g, "");
-  const carrierSuffix = carrierGateways[rawCarrier];
-
-  if (!number || !carrierSuffix) {
-    console.warn(`📵 Skipping SMS: missing number or carrier for ${person.name}`);
-    return;
-  }
-
-  const to_email = `${number}${carrierSuffix}`;
-  const formattedList = (person.chores || [])
-    .map(c => `• ${c.name} (${c.type})`).join("\n") || "No chores listed";
-
-  const freqSet = new Set((person.chores || []).map(c => c.type?.toLowerCase()));
-  const frequency = freqSet.size === 1
-    ? Array.from(freqSet)[0]?.replace(/^\w/, l => l.toUpperCase())
-    : "Mixed";
-
-  const date_range = getDateRange(frequency);
-
-  emailjs.send("service_v8ndidp", "template_53xar2k", {
-    to_email,
-    name: person.name,
-    chore_list: formattedList,
-    dollars: person.dollarsOwed || 0,
-    frequency,
-    date_range,
-    site_url: "https://ruutuli.github.io/choreChart/"
-  }).then(() => {
-    console.log(`✅ SMS sent to ${person.name}`);
-  }).catch(err => {
-    console.error(`❌ Failed to send SMS to ${person.name}`, err);
-  });
-}
-
 // ------------------- Function: getDateRange -------------------
 // Returns formatted range depending on chore frequency
 function getDateRange(frequency) {
@@ -84,60 +25,6 @@ function getDateRange(frequency) {
 
   return `${formatDate(start)} – ${formatDate(end)}`;
 }
-
-// ------------------- Function: shouldSendMorningText -------------------
-// Checks if the 8AM SMS was already sent today using Firestore
-async function shouldSendMorningText() {
-  const now = new Date();
-  const hours = now.getHours();
-  const todayStr = now.toISOString().split("T")[0];
-
-  try {
-    const docRef = window.doc(window.db, "meta", "lastSMS");
-    const docSnap = await window.getDoc(docRef);
-    const lastSent = docSnap.exists() ? docSnap.data().date : null;
-
-    return hours >= 8 && lastSent !== todayStr;
-  } catch (err) {
-    console.error("❌ Failed to check lastSMS in Firestore:", err);
-    return false;
-  }
-}
-
-// ------------------- Function: triggerDailySMS -------------------
-// Triggers SMS to all people at 8AM daily using Firestore
-async function triggerDailySMS() {
-  const shouldSend = await shouldSendMorningText();
-  if (!shouldSend) {
-    console.log("📪 Morning SMS already sent today or too early.");
-    return;
-  }
-
-  const timestamp = new Date().toLocaleString();
-  console.log(`📤 Sending 8AM SMS to all people at ${timestamp}...`);
-
-  people.forEach(p => {
-    console.log(`📨 Sending SMS to ${p.name} (${p.phone || p.email || p.id || "No contact info"})`);
-    sendChoreEmail(p);
-  });
-
-  const todayStr = new Date().toISOString().split("T")[0];
-  try {
-    const docRef = window.doc(window.db, "meta", "lastSMS");
-    await window.setDoc(docRef, { date: todayStr });
-    console.log(`✅ SMS sent logged in Firestore as ${todayStr}`);
-  } catch (err) {
-    console.error("❌ Failed to save lastSMS in Firestore:", err);
-  }
-}
-
-
-// 🔁 Check every 10 minutes
-setInterval(triggerDailySMS, 10 * 60 * 1000);
-
-// ✅ Also trigger on initial page load if past 8AM
-window.addEventListener("load", triggerDailySMS);
-
 
 // ============================================================================
 // ------------------- Data Persistence & Utilities -------------------

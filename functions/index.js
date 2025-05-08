@@ -1,12 +1,15 @@
 const functions = require('firebase-functions');
 const admin = require('firebase-admin');
-const emailjs = require('@emailjs/browser');
+const emailjs = require('@emailjs/nodejs');
 
 // Initialize Firebase Admin
 admin.initializeApp();
 
-// Initialize EmailJS
-emailjs.init("YOUR_PUBLIC_KEY"); // Replace with your EmailJS public key
+// Initialize EmailJS with your credentials
+emailjs.init({
+  publicKey: "2Y5bZw5v4twj7OYMV",
+  privateKey: functions.config().emailjs.private_key
+});
 
 // Helper to check if a frequency needs reset
 const needsReset = (frequency, lastReset) => {
