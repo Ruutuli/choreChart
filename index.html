@@ -14,19 +14,22 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="theme-color" content="#34d399" />
   <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="description" content="Family Chore Tracker - Manage household chores and track completion" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
   <!-- ------------------- Title & Manifest ------------------- -->
   <title>Family Chore Tracker</title>
   <link rel="manifest" href="manifest.json" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
+  <link rel="icon" type="image/png" href="icons/icon-192.png" />
 
   <!-- ------------------- Styles & Fonts ------------------- -->
   <link rel="stylesheet" href="style.css" />
-  <link
-    href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap"
-    rel="stylesheet"
-  />
-  <script src="https://kit.fontawesome.com/262000d25d.js" crossorigin="anonymous"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap" rel="stylesheet" />
+  <script src="https://kit.fontawesome.com/262000d25d.js" crossorigin="anonymous" defer></script>
 
   <!-- ------------------- Firebase SDK (v10 Module) ------------------- -->
   <script type="module">
@@ -109,32 +112,32 @@
 
 
   <body>
-    <div id="sandboxBanner" class="sandbox-banner hidden">
+    <div id="sandboxBanner" class="sandbox-banner hidden" role="alert" aria-live="polite">
       🧪 Sandbox Mode Active — No changes will be saved
     </div>
     
 <!-- ====================================================================== -->
 <!-- Sidebar: Navigation & Admin Actions                                   -->
 <!-- ====================================================================== -->
-<aside id="sidebar" class="sidebar">
+<aside id="sidebar" class="sidebar" role="navigation" aria-label="Main navigation">
   <div class="sidebar__header">
-    <h2><i class="fas fa-sliders-h"></i> Dashboard</h2>
-    <button class="sidebar__close" onclick="toggleSidebar()">
-      <i class="fas fa-times"></i>
+    <h2><i class="fas fa-sliders-h" aria-hidden="true"></i> Dashboard</h2>
+    <button class="sidebar__close" onclick="toggleSidebar()" aria-label="Close sidebar">
+      <i class="fas fa-times" aria-hidden="true"></i>
     </button>
   </div>
 
   <nav class="sidebar__nav">
-    <button class="sidebar__action" onclick="showSection('dashboard')" title="Return to dashboard">
-      <i class="fas fa-home"></i> Dashboard
+    <button class="sidebar__action" onclick="showSection('dashboard')" aria-label="Return to dashboard">
+      <i class="fas fa-home" aria-hidden="true"></i> Dashboard
     </button>
 
-    <button class="sidebar__action" onclick="showSection('history')" title="View stats and history">
-      <i class="fas fa-chart-bar"></i> Stats
+    <button class="sidebar__action" onclick="showSection('history')" aria-label="View stats and history">
+      <i class="fas fa-chart-bar" aria-hidden="true"></i> Stats
     </button>    
 
-    <button class="sidebar__action" onclick="showSection('admin')" title="Admin Tools">
-      <i class="fas fa-tools"></i> Admin
+    <button class="sidebar__action" onclick="showSection('admin')" aria-label="Admin Tools">
+      <i class="fas fa-tools" aria-hidden="true"></i> Admin
     </button>
 
   </nav>
@@ -144,20 +147,22 @@
     <!-- ====================================================================== -->
     <!-- Header: App Title & Menu Toggle                                       -->
     <!-- ====================================================================== -->
-    <header class="header">
+    <header class="header" role="banner">
       <div class="header__top-row">
-        <button class="header__menu" onclick="toggleSidebar()">
-          <i class="fas fa-bars"></i>
+        <button class="header__menu" onclick="toggleSidebar()" aria-label="Toggle menu">
+          <i class="fas fa-bars" aria-hidden="true"></i>
         </button>
     
-        <i class="fas fa-sync-alt refresh-icon" onclick="refreshChorePage()" title="Refresh Page"></i>
+        <button class="refresh-icon" onclick="refreshChorePage()" aria-label="Refresh page">
+          <i class="fas fa-sync-alt" aria-hidden="true"></i>
+        </button>
       </div>
     
       <h1 class="header__title">
-        <i class="fas fa-house-user"></i> Family Chore Tracker
+        <i class="fas fa-house-user" aria-hidden="true"></i> Family Chore Tracker
       </h1>
     
-      <p id="lastUpdatedText" class="updated-timestamp">Last updated: --</p>
+      <p id="lastUpdatedText" class="updated-timestamp" aria-live="polite">Last updated: --</p>
     </header>
     
     
@@ -165,11 +170,11 @@
     <!-- ====================================================================== -->
     <!-- Main Content Container                                                -->
     <!-- ====================================================================== -->
-    <main>
+    <main role="main">
       <!-- ==================================================================== -->
       <!-- 01. Dashboard Section — Default View                                -->
       <!-- ==================================================================== -->
-      <section id="dashboard">
+      <section id="dashboard" aria-label="Dashboard">
         <div id="dashboardContent" class="dashboard">
           <!-- Chore cards will be rendered here by JS -->
         </div>
@@ -178,11 +183,13 @@
       <!-- ==================================================================== -->
       <!-- 02. History Section — Completed Chores Per Person                   -->
       <!-- ==================================================================== -->
-      <section id="history" class="hidden">
-        <h2 class="section-title"><i class="fas fa-clock-rotate-left"></i> Stats & History</h2>
+      <section id="history" class="hidden" aria-label="Stats and History">
+        <h2 class="section-title">
+          <i class="fas fa-clock-rotate-left" aria-hidden="true"></i> Stats & History
+        </h2>
         <div class="back-btn-wrapper">
-          <button class="back-btn" onclick="showSection('dashboard')">
-            <i class="fas fa-home"></i> Dashboard
+          <button class="back-btn" onclick="showSection('dashboard')" aria-label="Return to dashboard">
+            <i class="fas fa-home" aria-hidden="true"></i> Dashboard
           </button>
         </div>
         <div id="historyContent" class="history__container"></div>
@@ -192,11 +199,13 @@
 <!-- ==================================================================== -->
 <!-- 04. Admin Section — Manual Overrides, Resets, Edits                -->
 <!-- ==================================================================== -->
-<section id="admin" class="hidden">
-  <h2 class="section-title"><i class="fas fa-tools"></i> Admin Tools</h2>
+<section id="admin" class="hidden" aria-label="Admin Tools">
+  <h2 class="section-title">
+    <i class="fas fa-tools" aria-hidden="true"></i> Admin Tools
+  </h2>
   <div class="back-btn-wrapper">
-    <button class="back-btn" onclick="showSection('dashboard')">
-      <i class="fas fa-home"></i> Dashboard
+    <button class="back-btn" onclick="showSection('dashboard')" aria-label="Return to dashboard">
+      <i class="fas fa-home" aria-hidden="true"></i> Dashboard
     </button>
   </div>
 
@@ -325,7 +334,7 @@
 <div id="skipChoreModal" class="modal" role="dialog" aria-labelledby="skipChoreTitle" aria-modal="true">
   <div class="modal__content">
     <h3 id="skipChoreTitle"><i class="fas fa-user-slash"></i> Confirm Skip</h3>
-    <p>Skip selected person’s chores for the selected time and reason?</p>
+    <p>Skip selected person's chores for the selected time and reason?</p>
     <div class="modal__actions">
       <button onclick="confirmSkipChore()">Yes, Skip</button>
       <button onclick="closeModal()">Cancel</button>
@@ -392,6 +401,6 @@
     <!-- ====================================================================== -->
     <!-- Scripts                                                               -->
     <!-- ====================================================================== -->
-    <script type="module" src="app.js"></script>
+    <script src="app.js" defer></script>
   </body>
 </html>
