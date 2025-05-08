@@ -1024,6 +1024,89 @@ const handleError = (error, context, showAlert = true) => {
   }
 };
 
+// ============================================================================
+// ------------------- Firebase Helpers -------------------
+// Firebase initialization and utility functions
+// ============================================================================
+
+// Add a function to check if Firebase is ready
+function isFirebaseReady() {
+  return window.db && typeof window.db.collection === 'function';
+}
+
+// Add Firebase initialization helper
+const initializeFirebase = async () => {
+  try {
+    if (!isFirebaseReady()) {
+      console.log("⏳ Waiting for Firebase to initialize...");
+      await new Promise(resolve => {
+        const checkInterval = setInterval(() => {
+          if (isFirebaseReady()) {
+            clearInterval(checkInterval);
+            resolve();
+          }
+        }, 100);
+      });
+    }
+    return true;
+  } catch (error) {
+    console.error("❌ Firebase initialization failed:", error);
+    showCustomAlert("❌ Failed to initialize Firebase. Please refresh the page.");
+    return false;
+  }
+};
+
+// Add retry mechanism for Firebase operations
+const withRetry = async (operation, maxRetries = 3) => {
+  let lastError;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (i < maxRetries - 1) {
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
+      }
+    }
+  }
+  throw lastError;
+};
+
+// Add Firebase settings management
+const SETTINGS_DOC = 'settings';
+
+// Helper to get settings from Firebase
+async function getSettings() {
+  try {
+    if (!await initializeFirebase()) {
+      return {};
+    }
+
+    const settingsRef = window.doc(window.db, "meta", SETTINGS_DOC);
+    const doc = await settingsRef.get();
+    return doc.exists ? doc.data() : {};
+  } catch (error) {
+    handleError(error, "Loading settings");
+    return {};
+  }
+}
+
+// Helper to save settings to Firebase
+async function saveSettings(settings) {
+  try {
+    if (!await initializeFirebase()) {
+      return;
+    }
+
+    await withRetry(async () => {
+      const settingsRef = window.doc(window.db, "meta", SETTINGS_DOC);
+      await window.setDoc(settingsRef, settings, { merge: true });
+    });
+  } catch (error) {
+    handleError(error, "Saving settings");
+  }
+}
+
 // ------------------- Function: initializeApp -------------------
 async function initializeApp() {
   try {
@@ -1701,7 +1784,6 @@ window.openSkipChoreModal        = openSkipChoreModal;
 window.openWeeklySummaryModal    = openWeeklySummaryModal;
 window.previewReset              = openPreviewResetModal; // alias
 window.reassignRotatingChores    = reassignRotatingChores;
-window.sendChoreEmail            = sendChoreEmail;
 window.showSection               = showSection;
 window.toggleAutoReset           = toggleAutoReset;
 window.togglePaid                = togglePaid;
@@ -1757,49 +1839,6 @@ const shouldLoadData = () => {
 // Helper to finish loading
 const finishLoading = () => {
   isLoading = false;
-};
-
-// Add a function to check if Firebase is ready
-function isFirebaseReady() {
-  return window.db && typeof window.db.collection === 'function';
-}
-
-// Add Firebase initialization helper
-const initializeFirebase = async () => {
-  try {
-    if (!isFirebaseReady()) {
-      console.log("⏳ Waiting for Firebase to initialize...");
-      await new Promise(resolve => {
-        const checkInterval = setInterval(() => {
-          if (isFirebaseReady()) {
-            clearInterval(checkInterval);
-            resolve();
-          }
-        }, 100);
-      });
-    }
-    return true;
-  } catch (error) {
-    console.error("❌ Firebase initialization failed:", error);
-    showCustomAlert("❌ Failed to initialize Firebase. Please refresh the page.");
-    return false;
-  }
-};
-
-// Add retry mechanism for Firebase operations
-const withRetry = async (operation, maxRetries = 3) => {
-  let lastError;
-  for (let i = 0; i < maxRetries; i++) {
-    try {
-      return await operation();
-    } catch (error) {
-      lastError = error;
-      if (i < maxRetries - 1) {
-        await new Promise(resolve => setTimeout(resolve, Math.pow(2, i) * 1000));
-      }
-    }
-  }
-  throw lastError;
 };
 
 // Update loadHouseholdData to use new helpers
@@ -1914,40 +1953,5 @@ async function logActivity(entry, householdId = "default") {
     });
   } catch (error) {
     handleError(error, "Logging activity", false);
-  }
-}
-
-// Add Firebase settings management
-const SETTINGS_DOC = 'settings';
-
-// Helper to get settings from Firebase
-async function getSettings() {
-  try {
-    if (!await initializeFirebase()) {
-      return {};
-    }
-
-    const settingsRef = window.doc(window.db, "meta", SETTINGS_DOC);
-    const doc = await settingsRef.get();
-    return doc.exists ? doc.data() : {};
-  } catch (error) {
-    handleError(error, "Loading settings");
-    return {};
-  }
-}
-
-// Helper to save settings to Firebase
-async function saveSettings(settings) {
-  try {
-    if (!await initializeFirebase()) {
-      return;
-    }
-
-    await withRetry(async () => {
-      const settingsRef = window.doc(window.db, "meta", SETTINGS_DOC);
-      await window.setDoc(settingsRef, settings, { merge: true });
-    });
-  } catch (error) {
-    handleError(error, "Saving settings");
   }
 }
