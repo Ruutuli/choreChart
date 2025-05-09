@@ -1,0 +1,12 @@
+{
+  "name": "chore-chart",
+  "version": "1.0.0",
+  "description": "Chore Chart Application",
+  "scripts": {
+    "serve": "cd functions && npm run serve",
+    "deploy": "cd functions && npm run deploy",
+    "shell": "cd functions && npm run shell",
+    "logs": "cd functions && npm run logs"
+  },
+  "private": true
+} 
