@@ -1,4 +1,4 @@
-const {onSchedule} = require("firebase-functions/v2/scheduler");
+const functions = require('firebase-functions');
 const {defineSecret} = require("firebase-functions/params");
 const {setGlobalOptions} = require("firebase-functions/v2");
 const admin = require('firebase-admin');
@@ -21,7 +21,9 @@ setGlobalOptions({
 // Initialize EmailJS with your credentials
 emailjs.init({
   publicKey: process.env.EMAILJS_PUBLIC_KEY || "2Y5bZw5v4twj7OYMV",
-  privateKey: process.env.EMAILJS_PRIVATE_KEY || "PAH5B4451FgXI2kAFn-s8"
+  privateKey: process.env.EMAILJS_PRIVATE_KEY || "PAH5B4451FgXI2kAFn-s8",
+  limitRate: true,
+  blockHeadless: false
 });
 
 // Helper to check if a frequency needs reset
@@ -231,264 +233,278 @@ const executeBatchWithRetry = async (batch, retries = 3) => {
 };
 
 // Main scheduled function that runs daily at midnight
-exports.scheduledChoreReset = onSchedule({
-  schedule: '0 0 * * *',
-  timeZone: 'America/New_York'
-}, async (context) => {
-  const householdId = "myHouseholdId";
-  const db = admin.firestore();
+exports.scheduledChoreReset = functions.pubsub.schedule('0 0 * * *')
+  .timeZone('America/New_York')
+  .onRun(async (context) => {
+    const householdId = "myHouseholdId";
+    const db = admin.firestore();
 
-  try {
-    // Get current state
-    const householdRef = db.collection('households').doc(householdId);
-    const householdDoc = await householdRef.get();
-    
-    if (!householdDoc.exists) {
-      console.log("❌ Household not found:", householdId);
-      return null;
-    }
-
-    const data = householdDoc.data();
-    let people = data.people || [];
-    
-    // Load rotating chores from data.json
-    const rotatingChores = [
-      { task: "Dishes", type: "daily" },
-      { task: "Trash", type: "daily" },
-      { task: "Kitchen Counter Wipe", type: "daily" },
-      { task: "Empty Roomba", type: "daily" },
-      { task: "Clean Trim Dining Room", type: "monthly" },
-      { task: "Sweep Laundry Room", type: "weekly" },
-      { task: "Mop Laundry Room", type: "biweekly" },
-      { task: "Clean Laundry Room", type: "weekly" },
-      { task: "Clean Entryway Rugs", type: "biweekly" },
-      { task: "Sweep Kitchen", type: "weekly" },
-      { task: "Mop Kitchen", type: "weekly" },
-      { task: "Clean Trim Kitchen", type: "monthly" },
-      { task: "Clean Kitchen Sink", type: "weekly" },
-      { task: "Clean Out Pantry", type: "biweekly" },
-      { task: "Clean Out Fridge", type: "biweekly" },
-      { task: "Garage Trash Out", type: "weekly" }
-    ];
-
-    const choreData = {
-      ...data.chores,
-      rotating: rotatingChores
-    };
-
-    // Add debug logging
-    console.log("🔍 Debug - Chore Data:", JSON.stringify(choreData, null, 2));
-    console.log("🔍 Debug - People Data:", JSON.stringify(people, null, 2));
-
-    // Get last reset timestamps
-    const metaRef = db.collection('meta').doc('lastReset');
-    const metaDoc = await metaRef.get();
-    const existing = metaDoc.exists ? metaDoc.data() : {};
-    const now = new Date();
-    const nowISO = now.toISOString();
-    const updates = {};
-
-    // Track which frequencies need reset
-    const frequencies = ["daily", "weekly", "biweekly", "monthly", "quarterly"];
-    const needsResetMap = {};
-    frequencies.forEach(freq => {
-      needsResetMap[freq] = needsReset(freq, existing[freq]);
-    });
-
-    // If nothing needs reset, return early
-    if (!Object.values(needsResetMap).some(Boolean)) {
-      console.log("✅ No resets needed");
-      return null;
-    }
-
-    // Process each person's chores
-    for (const person of people) {
-      const missedChores = [];
-      const completedToKeep = [];
-
-      // Check each chore
-      for (const chore of (person.chores || [])) {
-        const type = chore.type?.toLowerCase();
-        if (!type) continue;
-
-        // If this frequency needs reset
-        if (needsResetMap[type]) {
-          // If not completed, add to missed
-          if (!person.completed?.includes(chore.name)) {
-            missedChores.push(chore);
-          }
-        } else {
-          // Keep completed chores that don't need reset
-          if (person.completed?.includes(chore.name)) {
-            completedToKeep.push(chore.name);
-          }
-        }
+    try {
+      // Get current state
+      const householdRef = db.collection('households').doc(householdId);
+      const householdDoc = await householdRef.get();
+      
+      if (!householdDoc.exists) {
+        console.log("❌ Household not found:", householdId);
+        return null;
       }
 
-      // Update person's state
-      if (missedChores.length > 0) {
-        person.dollarsOwed = (person.dollarsOwed || 0) + missedChores.length;
-        person.paid = false;
+      const data = householdDoc.data();
+      let people = data.people || [];
+      
+      // Load rotating chores from data.json
+      const rotatingChores = [
+        { task: "Dishes", type: "daily" },
+        { task: "Trash", type: "daily" },
+        { task: "Kitchen Counter Wipe", type: "daily" },
+        { task: "Empty Roomba", type: "daily" },
+        { task: "Clean Trim Dining Room", type: "monthly" },
+        { task: "Sweep Laundry Room", type: "weekly" },
+        { task: "Mop Laundry Room", type: "biweekly" },
+        { task: "Clean Laundry Room", type: "weekly" },
+        { task: "Clean Entryway Rugs", type: "biweekly" },
+        { task: "Sweep Kitchen", type: "weekly" },
+        { task: "Mop Kitchen", type: "weekly" },
+        { task: "Clean Trim Kitchen", type: "monthly" },
+        { task: "Clean Kitchen Sink", type: "weekly" },
+        { task: "Clean Out Pantry", type: "biweekly" },
+        { task: "Clean Out Fridge", type: "biweekly" },
+        { task: "Garage Trash Out", type: "weekly" }
+      ];
 
-        try {
-          // Only log if we have valid data
-          if (person.name && missedChores.length > 0) {
-            const validChores = missedChores
-              .map(c => c.name)
-              .filter(name => name !== undefined && name !== null);
-            
-            if (validChores.length > 0) {
-              await logActivity(householdId, {
-                type: "missedChores",
-                person: person.name,
-                amount: missedChores.length,
-                chores: validChores
-              });
+      const choreData = {
+        ...data.chores,
+        rotating: rotatingChores
+      };
+
+      // Add debug logging
+      console.log("🔍 Debug - Chore Data:", JSON.stringify(choreData, null, 2));
+      console.log("🔍 Debug - People Data:", JSON.stringify(people, null, 2));
+
+      // Get last reset timestamps
+      const metaRef = db.collection('meta').doc('lastReset');
+      const metaDoc = await metaRef.get();
+      const existing = metaDoc.exists ? metaDoc.data() : {};
+      const now = new Date();
+      const nowISO = now.toISOString();
+      const updates = {};
+
+      // Track which frequencies need reset
+      const frequencies = ["daily", "weekly", "biweekly", "monthly", "quarterly"];
+      const needsResetMap = {};
+      frequencies.forEach(freq => {
+        needsResetMap[freq] = needsReset(freq, existing[freq]);
+      });
+
+      // If nothing needs reset, return early
+      if (!Object.values(needsResetMap).some(Boolean)) {
+        console.log("✅ No resets needed");
+        return null;
+      }
+
+      // Process each person's chores
+      for (const person of people) {
+        const missedChores = [];
+        const completedToKeep = [];
+
+        // Check each chore
+        for (const chore of (person.chores || [])) {
+          const type = chore.type?.toLowerCase();
+          if (!type) continue;
+
+          // If this frequency needs reset
+          if (needsResetMap[type]) {
+            // If not completed, add to missed
+            if (!person.completed?.includes(chore.name)) {
+              missedChores.push(chore);
+            }
+          } else {
+            // Keep completed chores that don't need reset
+            if (person.completed?.includes(chore.name)) {
+              completedToKeep.push(chore.name);
             }
           }
-        } catch (err) {
-          console.error("❌ Failed to log missed chores:", err);
-          // Continue execution even if logging fails
         }
+
+        // Update person's state
+        if (missedChores.length > 0) {
+          person.dollarsOwed = (person.dollarsOwed || 0) + missedChores.length;
+          person.paid = false;
+
+          try {
+            // Only log if we have valid data
+            if (person.name && missedChores.length > 0) {
+              const validChores = missedChores
+                .map(c => c.name)
+                .filter(name => name !== undefined && name !== null);
+              
+              if (validChores.length > 0) {
+                await logActivity(householdId, {
+                  type: "missedChores",
+                  person: person.name,
+                  amount: missedChores.length,
+                  chores: validChores
+                });
+              }
+            }
+          } catch (err) {
+            console.error("❌ Failed to log missed chores:", err);
+            // Continue execution even if logging fails
+          }
+        }
+
+        // Update completed list
+        person.completed = completedToKeep;
       }
 
-      // Update completed list
-      person.completed = completedToKeep;
-    }
-
-    // Handle resets based on frequency
-    if (needsResetMap.daily || needsResetMap.weekly || needsResetMap.biweekly || 
-        needsResetMap.monthly || needsResetMap.quarterly) {
-      console.log("🔁 Reassigning rotating chores");
-      const { updatedPeople, updatedRotating } = await reassignRotatingChores(people, choreData);
-      people = updatedPeople;
-      choreData.rotating = updatedRotating;
-    }
-
-    // Update timestamps
-    frequencies.forEach(freq => {
-      if (needsResetMap[freq]) {
-        updates[freq] = nowISO;
+      // Handle resets based on frequency
+      if (needsResetMap.daily || needsResetMap.weekly || needsResetMap.biweekly || 
+          needsResetMap.monthly || needsResetMap.quarterly) {
+        console.log("🔁 Reassigning rotating chores");
+        const { updatedPeople, updatedRotating } = await reassignRotatingChores(people, choreData);
+        people = updatedPeople;
+        choreData.rotating = updatedRotating;
       }
-    });
 
-    // Save all changes
-    const batch = db.batch();
-    
-    // Update household data
-    batch.update(householdRef, { 
-      people,
-      chores: {
-        ...choreData,
-        rotating: choreData.rotating
+      // Update timestamps
+      frequencies.forEach(freq => {
+        if (needsResetMap[freq]) {
+          updates[freq] = nowISO;
+        }
+      });
+
+      // Save all changes
+      const batch = db.batch();
+      
+      // Update household data
+      batch.update(householdRef, { 
+        people,
+        chores: {
+          ...choreData,
+          rotating: choreData.rotating
+        }
+      });
+      
+      // Update reset timestamps
+      batch.set(metaRef, { ...existing, ...updates }, { merge: true });
+      
+      try {
+        await executeBatchWithRetry(batch);
+        console.log("✅ Reset completed successfully");
+      } catch (err) {
+        console.error("❌ Failed to save changes after multiple retries:", err);
+        throw err;
       }
-    });
-    
-    // Update reset timestamps
-    batch.set(metaRef, { ...existing, ...updates }, { merge: true });
-    
-    try {
-      await executeBatchWithRetry(batch);
-      console.log("✅ Reset completed successfully");
-    } catch (err) {
-      console.error("❌ Failed to save changes after multiple retries:", err);
-      throw err;
-    }
 
-    return null;
-  } catch (error) {
-    console.error("❌ Error during reset:", error);
-    throw error;
-  }
-});
+      return null;
+    } catch (error) {
+      console.error("❌ Error during reset:", error);
+      throw error;
+    }
+  });
 
 // Function to send morning SMS to all people
 // Test deployment - May 8, 2024 - Force redeploy
-exports.sendMorningSMS = onSchedule({
-  schedule: '0 8 * * *',
-  timeZone: 'America/New_York'
-}, async (context) => {
-  const householdId = "myHouseholdId";
-  const db = admin.firestore();
+exports.sendMorningSMS = functions.pubsub.schedule('0 8 * * *')
+  .timeZone('America/New_York')
+  .onRun(async (context) => {
+    console.log("📱 Starting sendMorningSMS function");
+    const householdId = "myHouseholdId";
+    const db = admin.firestore();
 
-  try {
-    // Get household data
-    const householdRef = db.collection('households').doc(householdId);
-    const householdDoc = await householdRef.get();
-    
-    if (!householdDoc.exists) {
-      console.log("❌ Household not found:", householdId);
+    try {
+      // Get household data
+      const householdRef = db.collection('households').doc(householdId);
+      const householdDoc = await householdRef.get();
+      
+      if (!householdDoc.exists) {
+        console.log("❌ Household not found:", householdId);
+        return null;
+      }
+
+      const data = householdDoc.data();
+      const people = data.people || [];
+      console.log(`👥 Found ${people.length} people in household`);
+
+      // Check if SMS was already sent today
+      const metaRef = db.collection('meta').doc('lastSMS');
+      const metaDoc = await metaRef.get();
+      const todayStr = new Date().toISOString().split('T')[0];
+      
+      if (metaDoc.exists && metaDoc.data().date === todayStr) {
+        console.log("📪 Morning SMS already sent today");
+        return null;
+      }
+
+      // Send SMS to each person
+      for (const person of people) {
+        console.log(`📱 Processing SMS for ${person.name}`);
+        const todayChores = (person.chores || []).filter(c => {
+          const t = c.type?.toLowerCase();
+          return ["daily", "weekly", "biweekly"].includes(t);
+        });
+
+        console.log(`📋 Found ${todayChores.length} chores for today`);
+
+        if (todayChores.length === 0) {
+          console.log(`⏭️ Skipping ${person.name} - no chores for today`);
+          continue;
+        }
+
+        const formattedList = todayChores.map(c => `• ${c.name} (${c.type})`).join("\n");
+        const rawNumber = person.phone ?? "";
+        const rawCarrier = person.carrier ?? "";
+        const number = rawNumber.replace(/\D/g, "");
+        const carrierSuffix = carrierGateways[rawCarrier];
+
+        console.log(`📱 Phone info for ${person.name}:`, {
+          rawNumber,
+          rawCarrier,
+          number,
+          carrierSuffix
+        });
+
+        if (!number || !carrierSuffix) {
+          console.warn(`📵 Skipping SMS: missing number or carrier for ${person.name}`);
+          continue;
+        }
+
+        const to_email = `${number}${carrierSuffix}`;
+        const freqSet = new Set(todayChores.map(c => c.type?.toLowerCase()));
+        const frequency = freqSet.size === 1
+          ? Array.from(freqSet)[0]?.replace(/^\w/, l => l.toUpperCase())
+          : "Mixed";
+
+        const date_range = getDateRange(frequency);
+
+        console.log(`📤 Attempting to send SMS to ${person.name} at ${to_email}`);
+
+        try {
+          await emailjs.send("service_v8ndidp", "template_53xar2k", {
+            to_email,
+            name: person.name,
+            chore_list: formattedList,
+            dollars: person.dollarsOwed || 0,
+            frequency,
+            date_range,
+            site_url: "https://ruutuli.github.io/choreChart/"
+          });
+          console.log(`✅ SMS sent to ${person.name}`);
+        } catch (err) {
+          console.error(`❌ Failed to send SMS to ${person.name}:`, err);
+        }
+      }
+
+      // Update last SMS timestamp
+      await metaRef.set({ date: todayStr });
+      console.log(`✅ SMS sent logged in Firestore as ${todayStr}`);
+
+      return null;
+    } catch (error) {
+      console.error("❌ Error in sendMorningSMS:", error);
       return null;
     }
-
-    const data = householdDoc.data();
-    const people = data.people || [];
-
-    // Check if SMS was already sent today
-    const metaRef = db.collection('meta').doc('lastSMS');
-    const metaDoc = await metaRef.get();
-    const todayStr = new Date().toISOString().split('T')[0];
-    
-    // Temporarily comment out the check for testing
-    // if (metaDoc.exists && metaDoc.data().date === todayStr) {
-    //   console.log("📪 Morning SMS already sent today");
-    //   return null;
-    // }
-
-    // Send SMS to each person
-    for (const person of people) {
-      const todayChores = (person.chores || []).filter(c => {
-        const t = c.type?.toLowerCase();
-        return ["daily", "weekly", "biweekly"].includes(t);
-      });
-
-      if (todayChores.length === 0) continue;
-
-      const formattedList = todayChores.map(c => `• ${c.name} (${c.type})`).join("\n");
-      const rawNumber = person.phone ?? "";
-      const rawCarrier = person.carrier ?? "";
-      const number = rawNumber.replace(/\D/g, "");
-      const carrierSuffix = carrierGateways[rawCarrier];
-
-      if (!number || !carrierSuffix) {
-        console.warn(`📵 Skipping SMS: missing number or carrier for ${person.name}`);
-        continue;
-      }
-
-      const to_email = `${number}${carrierSuffix}`;
-      const freqSet = new Set(todayChores.map(c => c.type?.toLowerCase()));
-      const frequency = freqSet.size === 1
-        ? Array.from(freqSet)[0]?.replace(/^\w/, l => l.toUpperCase())
-        : "Mixed";
-
-      const date_range = getDateRange(frequency);
-
-      try {
-        await emailjs.send("service_v8ndidp", "template_53xar2k", {
-          to_email,
-          name: person.name,
-          chore_list: formattedList,
-          dollars: person.dollarsOwed || 0,
-          frequency,
-          date_range,
-          site_url: "https://ruutuli.github.io/choreChart/"
-        });
-        console.log(`✅ SMS sent to ${person.name}`);
-      } catch (err) {
-        console.error(`❌ Failed to send SMS to ${person.name}`, err);
-      }
-    }
-
-    // Update last SMS timestamp
-    await metaRef.set({ date: todayStr });
-    console.log(`✅ SMS sent logged in Firestore as ${todayStr}`);
-
-    return null;
-  } catch (error) {
-    console.error("❌ Error in sendMorningSMS:", error);
-    return null;
-  }
-});
+  });
 
 // Helper function to get date range for SMS
 function getDateRange(frequency) {
