@@ -17,12 +17,16 @@
       {
         "id": "jkins",
         "name": "Jkins",
-        "color": "#5a9bd8"
+        "color": "#5a9bd8",
+        "phone": "8283208430",
+        "carrier": "Verizon"
       },
       {
         "id": "natasha",
         "name": "Natasha",
-        "color": "#a673d1"
+        "color": "#a673d1",
+        "phone": "6033668644",
+        "carrier": "AT&T"
       }
     ],
     "chores": {
@@ -43,7 +47,7 @@
             { "task": "Mop Loft", "type": "biweekly" },
             { "task": "Dust Loft", "type": "weekly" },
             { "task": "Clean Trim Loft", "type": "monthly" },
-            { "task": "Litter Box (Loft)", "type": "weekly" },
+            { "task": "Litter Box (Loft)", "type": "biweekly" },
             { "task": "Update Calendar", "type": "monthly" },
             { "task": "Scrub Kitchen Grout", "type": "monthly" },
             { "task": "Change Filters", "type": "quarterly" }
@@ -52,7 +56,6 @@
             { "task": "Sweep/Vacuum Dining Room", "type": "weekly" },
             { "task": "Mop Dining Room", "type": "biweekly" },
             { "task": "Dust Dining Room", "type": "weekly" },
-            { "task": "Clean Trim Dining Room", "type": "monthly" },
             { "task": "Sweep/Vacuum Foyer", "type": "weekly" },
             { "task": "Dining Room Cushions", "type": "monthly" },
             { "task": "Mop Foyer", "type": "weekly" },
